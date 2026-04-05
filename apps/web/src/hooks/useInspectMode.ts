@@ -6,6 +6,8 @@ export interface UseInspectModeReturn {
   selectedContext: ElementContext | null;
   toggleInspectMode: () => void;
   iframeRef: React.RefObject<HTMLIFrameElement>;
+  /** Directly set context — used when restoring an entry from history */
+  setSelectedContext: React.Dispatch<React.SetStateAction<ElementContext | null>>;
 }
 
 export function useInspectMode(): UseInspectModeReturn {
@@ -37,5 +39,5 @@ export function useInspectMode(): UseInspectModeReturn {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  return { isInspectMode, selectedContext, toggleInspectMode, iframeRef };
+  return { isInspectMode, selectedContext, toggleInspectMode, iframeRef, setSelectedContext };
 }

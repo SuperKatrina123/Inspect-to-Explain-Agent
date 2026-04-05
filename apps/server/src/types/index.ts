@@ -45,6 +45,14 @@ export interface CodeReference {
   componentName: string;
 }
 
+/** One persisted inspect session — context + analysis result */
+export interface HistoryEntry {
+  id: string;
+  timestamp: string;
+  context: ElementContext;
+  result: AnalysisResult;
+}
+
 export interface AnalysisResult {
   elementText: string;
   moduleName: string;

@@ -45,4 +45,12 @@ export interface AnalysisResult {
   modelUsed?: string;
 }
 
+/** One persisted inspect session saved in backend history */
+export interface HistoryEntry {
+  id: string;
+  timestamp: string;
+  context: ElementContext;
+  result: AnalysisResult;
+}
+
 export type AnalysisStatus = 'idle' | 'loading' | 'success' | 'error';
