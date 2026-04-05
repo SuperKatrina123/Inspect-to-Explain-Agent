@@ -342,3 +342,77 @@ code { font-family: 'SF Mono', monospace; font-size: 11px; color: #93c5fd; }
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   Compare diff highlights
+───────────────────────────────────────────────────────────────── */
+
+/* Changed row: amber left-border + faint amber background */
+.cmp-row--changed {
+  display: grid; grid-template-columns: 64px 1fr auto;
+  gap: 6px; margin-bottom: 4px; align-items: start;
+  border-left: 2px solid #f59e0b;
+  padding-left: 8px;
+  background: rgba(245,158,11,.07);
+  border-radius: 0 4px 4px 0;
+}
+
+/* Default (unchanged) row still uses grid */
+.cmp-row {
+  display: grid; grid-template-columns: 64px 1fr auto;
+  gap: 6px; margin-bottom: 4px; align-items: start;
+  padding-left: 10px; /* align with changed rows */
+}
+
+/* ≠ icon shown next to changed values */
+.diff-icon {
+  font-size: 12px; font-weight: 900; color: #f59e0b;
+  justify-self: end; padding-top: 2px; flex-shrink: 0;
+}
+
+/* Changed explanation section gets a left accent */
+.cmp-section--changed {
+  border-left: 2px solid #f59e0b;
+  padding-left: 8px;
+  background: rgba(245,158,11,.04);
+  border-radius: 0 4px 4px 0;
+}
+
+/* Section-level note (e.g. "— differs ≠") */
+.diff-section-note {
+  font-size: 9px; font-weight: 400; text-transform: none;
+  color: #f59e0b; margin-left: 4px; letter-spacing: 0;
+}
+
+/* Components unique to this side (amber) */
+.comp-chip--unique {
+  background: rgba(245,158,11,.2) !important;
+  border-color: rgba(245,158,11,.5) !important;
+  color: #fbbf24 !important;
+}
+.chip-only-mark { font-size: 9px; opacity: .8; }
+
+/* Components only in the OTHER side (shown greyed/strikethrough) */
+.comp-chip--absent {
+  background: rgba(100,116,139,.1) !important;
+  border-color: rgba(100,116,139,.2) !important;
+  color: #475569 !important;
+  text-decoration: line-through;
+  opacity: .6;
+}
+
+/* Confidence delta badge */
+.conf-delta {
+  font-size: 10px; font-weight: 800; padding: 1px 6px;
+  border-radius: 99px; margin-left: 4px; flex-shrink: 0;
+}
+.conf-delta--up   { background: rgba(34,197,94,.2);  color: #22c55e; }
+.conf-delta--down { background: rgba(239,68,68,.2);  color: #ef4444; }
+
+/* Diff summary banner in modal header */
+.diff-banner {
+  font-size: 11px; font-weight: 700; padding: 3px 10px;
+  border-radius: 99px; margin-left: 10px;
+}
+.diff-banner--same { background: rgba(34,197,94,.15);  color: #22c55e; }
+.diff-banner--diff { background: rgba(245,158,11,.15); color: #f59e0b; }
