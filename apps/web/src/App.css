@@ -148,3 +148,12 @@ code { font-family: 'SF Mono', monospace; font-size: 11px; color: #93c5fd; }
 .evidence-list { margin-top: 4px; padding-left: 16px; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
 .explanation { color: var(--text); font-size: 12px; line-height: 1.7; margin-top: 4px; }
 .result-error { color: var(--red); font-size: 12px; }
+
+/* ── analysis mode badge ── */
+.panel-title { display: flex; align-items: center; gap: 8px; }
+.mode-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 8px;
+  border-radius: 99px; letter-spacing: .04em; text-transform: none;
+}
+.mode-llm  { background: rgba(139,92,246,.25); color: #c4b5fd; border: 1px solid rgba(139,92,246,.4); }
+.mode-mock { background: rgba(100,116,139,.2); color: #94a3b8; border: 1px solid rgba(100,116,139,.3); }

@@ -42,4 +42,8 @@ export interface AnalysisResult {
   confidence: number;
   evidence: string[];
   explanation: string;
+  /** Which backend produced this result */
+  analysisMode?: 'llm' | 'mock';
+  /** Raw model name used, e.g. "anthropic/claude-3-5-sonnet" */
+  modelUsed?: string;
 }

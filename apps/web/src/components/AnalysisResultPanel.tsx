@@ -30,7 +30,14 @@ export function AnalysisResultPanel({ result, error }: Props) {
 
   return (
     <div className="panel">
-      <h3 className="panel-title">📊 Analysis Result</h3>
+      <h3 className="panel-title">
+        📊 Analysis Result
+        {result.analysisMode && (
+          <span className={`mode-badge ${result.analysisMode === 'llm' ? 'mode-llm' : 'mode-mock'}`}>
+            {result.analysisMode === 'llm' ? `✨ ${result.modelUsed ?? 'LLM'}` : '🔧 mock'}
+          </span>
+        )}
+      </h3>
       <div className="result-grid">
         <div className="result-row">
           <span className="result-label">Element Text</span>

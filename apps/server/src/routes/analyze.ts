@@ -1,21 +1,28 @@
 import { Router, Request, Response } from 'express';
 import { ElementContext } from '../types';
-import { analyzeElement } from '../services/mockRetrieval';
+import { analyzeElement as mockAnalyze } from '../services/mockRetrieval';
+import { analyzeElementWithLLM } from '../services/llmRetrieval';
 
 const router = Router();
 
-router.post('/analyze-element', (req: Request, res: Response) => {
+router.post('/analyze-element', async (req: Request, res: Response) => {
   const ctx = req.body as ElementContext;
 
   if (!ctx?.selectedElement?.tag) {
     return res.status(400).json({ error: 'Invalid element context: missing selectedElement' });
   }
 
+  const useLLM = process.env.USE_LLM === 'true';
+  console.log(`[route] analyze-element — mode: ${useLLM ? 'llm' : 'mock'}`);
+
   try {
-    const result = analyzeElement(ctx);
+    const result = useLLM
+      ? await analyzeElementWithLLM(ctx)
+      : { ...mockAnalyze(ctx), analysisMode: 'mock' as const };
+
     return res.json({ success: true, result });
   } catch (err) {
-    console.error('[analyze-element] error:', err);
+    console.error('[analyze-element] unexpected error:', err);
     return res.status(500).json({ error: 'Analysis failed', details: String(err) });
   }
 });

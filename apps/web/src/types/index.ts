@@ -33,6 +33,8 @@ export interface AnalysisResult {
   confidence: number;
   evidence: string[];
   explanation: string;
+  analysisMode?: 'llm' | 'mock';
+  modelUsed?: string;
 }
 
 export type AnalysisStatus = 'idle' | 'loading' | 'success' | 'error';
