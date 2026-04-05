@@ -1,0 +1,18 @@
+{
+  "name": "inspect-to-explain-agent",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/server",
+    "demo/demo-app"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,demo,web -c cyan,green,blue \"npm run dev --workspace=apps/server\" \"npm run dev --workspace=demo/demo-app\" \"npm run dev --workspace=apps/web\"",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:server": "npm run dev --workspace=apps/server",
+    "dev:demo": "npm run dev --workspace=demo/demo-app"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
