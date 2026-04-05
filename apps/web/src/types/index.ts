@@ -25,6 +25,13 @@ export type SourceType =
   | 'derived_field'
   | 'unknown_candidate';
 
+export interface CodeReference {
+  file: string;
+  line: number;
+  snippet: string;
+  componentName: string;
+}
+
 export interface AnalysisResult {
   elementText: string;
   moduleName: string;
@@ -33,6 +40,7 @@ export interface AnalysisResult {
   confidence: number;
   evidence: string[];
   explanation: string;
+  codeReferences?: CodeReference[];
   analysisMode?: 'llm' | 'mock';
   modelUsed?: string;
 }

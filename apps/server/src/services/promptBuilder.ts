@@ -1,4 +1,4 @@
-import { ElementContext } from '../types';
+import { ElementContext, CodeReference } from '../types';
 
 /**
  * Builds the system prompt that instructs the LLM on the analysis task,
@@ -43,8 +43,9 @@ Rules:
 /**
  * Serialises the ElementContext into a compact, readable user message
  * so the LLM has maximum signal in minimum tokens.
+ * Optionally includes local code search results for grounded analysis.
  */
-export function buildUserMessage(ctx: ElementContext): string {
+export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]): string {
   const { selectedElement: el, ancestors, siblings, nearbyTexts, url } = ctx;
 
   const ancestorChain = ancestors
@@ -82,7 +83,13 @@ ${siblingList || '(none)'}
 ## Nearby Visible Texts
 
 ${nearbyTexts.slice(0, 8).map((t) => `  • "${t.slice(0, 80)}"`).join('\n') || '(none)'}
+${codeRefs && codeRefs.length > 0 ? `
+## Local Code References (found by static search)
 
+The following source file locations were found by searching the local codebase for the element's class names and ancestor tokens. Use these to ground your analysis in the actual code:
+
+${codeRefs.map((r) => `  📄 ${r.file}:${r.line} [${r.componentName}]\n     ${r.snippet}`).join('\n\n')}
+` : ''}
 ---
 Analyze this element and return the JSON result.`;
 }

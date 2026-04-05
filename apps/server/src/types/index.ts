@@ -34,6 +34,17 @@ export type SourceType =
   | 'derived_field'
   | 'unknown_candidate';
 
+/** A single matched location found by the local code searcher */
+export interface CodeReference {
+  /** Path relative to project root, e.g. "demo/demo-app/src/components/UserProfileCard.tsx" */
+  file: string;
+  line: number;
+  /** The trimmed source line that matched */
+  snippet: string;
+  /** Component name inferred from the file name */
+  componentName: string;
+}
+
 export interface AnalysisResult {
   elementText: string;
   moduleName: string;
@@ -42,8 +53,10 @@ export interface AnalysisResult {
   confidence: number;
   evidence: string[];
   explanation: string;
+  /** Source file locations found by local code search */
+  codeReferences?: CodeReference[];
   /** Which backend produced this result */
   analysisMode?: 'llm' | 'mock';
-  /** Raw model name used, e.g. "anthropic/claude-3-5-sonnet" */
+  /** Raw model name used, e.g. "gpt-5.4" */
   modelUsed?: string;
 }

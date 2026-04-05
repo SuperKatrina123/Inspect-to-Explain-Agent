@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
-import { ElementContext, AnalysisResult, SourceType } from '../types';
+import { ElementContext, AnalysisResult, SourceType, CodeReference } from '../types';
 import { buildSystemPrompt, buildUserMessage } from './promptBuilder';
 import { analyzeElement as mockAnalyze } from './mockRetrieval';
+import { searchByContext } from './codeSearch';
 
 // ── OpenAI-compatible client — base URL and model are read from env ──────────
 // Default to the user-configured proxy; override via LLM_BASE_URL / LLM_MODEL.
@@ -32,13 +33,13 @@ function parseModelResponse(raw: string, ctx: ElementContext): AnalysisResult | 
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(cleaned) as Record<string, unknown>;
 
-    const elementText       = typeof parsed.elementText === 'string'        ? parsed.elementText       : ctx.selectedElement.text.slice(0, 100);
-    const moduleName        = typeof parsed.moduleName === 'string'         ? parsed.moduleName        : 'Unknown';
+    const elementText         = typeof parsed.elementText === 'string'      ? parsed.elementText       : ctx.selectedElement.text.slice(0, 100);
+    const moduleName          = typeof parsed.moduleName === 'string'       ? parsed.moduleName        : 'Unknown';
     const candidateComponents = Array.isArray(parsed.candidateComponents)   ? (parsed.candidateComponents as string[]).filter(s => typeof s === 'string') : [moduleName];
-    const sourceType        = isValidSourceType(parsed.sourceType)          ? parsed.sourceType        : 'unknown_candidate';
-    const confidence        = typeof parsed.confidence === 'number'         ? Math.min(Math.max(parsed.confidence, 0), 1) : 0.5;
-    const evidence          = Array.isArray(parsed.evidence)                ? (parsed.evidence as string[]).filter(s => typeof s === 'string') : [];
-    const explanation       = typeof parsed.explanation === 'string'        ? parsed.explanation       : '';
+    const sourceType          = isValidSourceType(parsed.sourceType)        ? parsed.sourceType        : 'unknown_candidate';
+    const confidence          = typeof parsed.confidence === 'number'       ? Math.min(Math.max(parsed.confidence, 0), 1) : 0.5;
+    const evidence            = Array.isArray(parsed.evidence)              ? (parsed.evidence as string[]).filter(s => typeof s === 'string') : [];
+    const explanation         = typeof parsed.explanation === 'string'      ? parsed.explanation       : '';
 
     return { elementText, moduleName, candidateComponents, sourceType, confidence, evidence, explanation };
   } catch {
@@ -48,32 +49,45 @@ function parseModelResponse(raw: string, ctx: ElementContext): AnalysisResult | 
 
 /**
  * Call the LLM via the configured proxy and return a structured AnalysisResult.
+ * Runs local code search first to ground the LLM's analysis in real source files.
  * Falls back to the mock analyser on any error.
  */
 export async function analyzeElementWithLLM(ctx: ElementContext): Promise<AnalysisResult> {
-  const apiKey  = process.env.ANTHROPIC_API_KEY;
-  const baseURL = process.env.LLM_BASE_URL ?? DEFAULT_BASE_URL;
+  const apiKey      = process.env.ANTHROPIC_API_KEY;
+  const baseURL     = process.env.LLM_BASE_URL ?? DEFAULT_BASE_URL;
+  const projectRoot = process.env.CODE_SEARCH_ROOT;
 
   if (!apiKey) {
     console.warn('[llm] ANTHROPIC_API_KEY not set — falling back to mock');
     return { ...mockAnalyze(ctx), analysisMode: 'mock' };
   }
 
-  const client = new OpenAI({
-    apiKey,
-    baseURL,
-  });
+  // ── Step 1: local code search ──────────────────────────────────────────────
+  let codeRefs: CodeReference[] = [];
+  if (projectRoot) {
+    try {
+      codeRefs = searchByContext(ctx, projectRoot);
+      console.log(`[code-search] Found ${codeRefs.length} reference(s)`);
+      codeRefs.forEach(r => console.log(`  📄 ${r.file}:${r.line}  ${r.snippet.slice(0, 60)}`));
+    } catch (err) {
+      console.warn('[code-search] Search failed:', err instanceof Error ? err.message : err);
+    }
+  } else {
+    console.warn('[code-search] CODE_SEARCH_ROOT not set — skipping local search');
+  }
 
+  // ── Step 2: call LLM with code refs injected into the prompt ──────────────
+  const client = new OpenAI({ apiKey, baseURL });
   const systemPrompt = buildSystemPrompt();
-  const userMessage  = buildUserMessage(ctx);
+  const userMessage  = buildUserMessage(ctx, codeRefs);
 
-  console.log(`[llm] Calling ${MODEL} via OpenRouter…`);
+  console.log(`[llm] Calling ${MODEL}…`);
 
   try {
     const completion = await client.chat.completions.create({
       model: MODEL,
       max_tokens: 1024,
-      temperature: 0.2,      // low temp → more deterministic, structured output
+      temperature: 0.2,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user',   content: userMessage  },
@@ -86,17 +100,17 @@ export async function analyzeElementWithLLM(ctx: ElementContext): Promise<Analys
     const result = parseModelResponse(rawContent, ctx);
     if (!result) {
       console.error('[llm] Failed to parse model response — falling back to mock');
-      return { ...mockAnalyze(ctx), analysisMode: 'mock' };
+      return { ...mockAnalyze(ctx), codeReferences: codeRefs, analysisMode: 'mock' };
     }
 
     return {
       ...result,
+      codeReferences: codeRefs,
       analysisMode: 'llm',
       modelUsed: MODEL,
     };
   } catch (err) {
     console.error('[llm] API call failed:', err instanceof Error ? err.message : err);
-    // Graceful degradation: always return something useful
-    return { ...mockAnalyze(ctx), analysisMode: 'mock' };
+    return { ...mockAnalyze(ctx), codeReferences: codeRefs, analysisMode: 'mock' };
   }
 }

@@ -78,6 +78,24 @@ export function AnalysisResultPanel({ result, error }: Props) {
         <div className="section-label">Explanation</div>
         <p className="explanation">{result.explanation}</p>
       </div>
+
+      {result.codeReferences && result.codeReferences.length > 0 && (
+        <div className="result-section">
+          <div className="section-label">📂 Code References</div>
+          <div className="code-refs">
+            {result.codeReferences.map((ref, i) => (
+              <div key={i} className="code-ref-item">
+                <div className="code-ref-header">
+                  <span className="code-ref-file">{ref.file}</span>
+                  <span className="code-ref-line">:{ref.line}</span>
+                  <span className="code-ref-comp">{ref.componentName}</span>
+                </div>
+                <pre className="code-ref-snippet">{ref.snippet}</pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
