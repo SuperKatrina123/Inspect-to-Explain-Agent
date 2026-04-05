@@ -25,6 +25,12 @@ export interface ElementContext {
   ancestors: AncestorNode[];
   siblings: SiblingNode[];
   nearbyTexts: string[];
+  /**
+   * React component names from the Fiber tree, nearest → root.
+   * e.g. ["OrderItemRow", "OrderSummary", "App"]
+   * Empty array when Fiber is not accessible.
+   */
+  reactComponentStack: string[];
 }
 
 export type SourceType =

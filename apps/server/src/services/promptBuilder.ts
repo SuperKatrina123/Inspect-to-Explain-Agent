@@ -46,7 +46,7 @@ Rules:
  * Optionally includes local code search results for grounded analysis.
  */
 export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]): string {
-  const { selectedElement: el, ancestors, siblings, nearbyTexts, url } = ctx;
+  const { selectedElement: el, ancestors, siblings, nearbyTexts, url, reactComponentStack } = ctx;
 
   const ancestorChain = ancestors
     .map((a) => {
@@ -61,6 +61,11 @@ export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]
     .slice(0, 5)
     .map((s) => `  • <${s.tag} class="${s.className}">${s.text ? `"${s.text.slice(0, 40)}"` : '(empty)'}`)
     .join('\n');
+
+  // Fiber component stack section — only included when available
+  const fiberSection = reactComponentStack && reactComponentStack.length > 0
+    ? `\n## React Component Stack (from Fiber tree — most reliable signal)\n\n${reactComponentStack.join(' → ')}\n\nThe nearest component to the selected element is listed first. Use this as your primary signal for moduleName and candidateComponents.\n`
+    : '';
 
   return `## Selected Element
 
@@ -83,10 +88,10 @@ ${siblingList || '(none)'}
 ## Nearby Visible Texts
 
 ${nearbyTexts.slice(0, 8).map((t) => `  • "${t.slice(0, 80)}"`).join('\n') || '(none)'}
-${codeRefs && codeRefs.length > 0 ? `
+${fiberSection}${codeRefs && codeRefs.length > 0 ? `
 ## Local Code References (found by static search)
 
-The following source file locations were found by searching the local codebase for the element's class names and ancestor tokens. Use these to ground your analysis in the actual code:
+The following source file locations were found by searching the local codebase. Use these to ground your analysis in the actual code:
 
 ${codeRefs.map((r) => `  📄 ${r.file}:${r.line} [${r.componentName}]\n     ${r.snippet}`).join('\n\n')}
 ` : ''}

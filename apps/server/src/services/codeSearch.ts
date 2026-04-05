@@ -34,12 +34,31 @@ function kebabToPascal(s: string): string {
   return s.split(/[-_]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('');
 }
 
+interface SearchTokens {
+  /** Component names from React Fiber — most reliable, used as primary signal */
+  fiberComponents: string[];
+  /** Kebab class names to search as fallback */
+  classTokens: string[];
+  /** PascalCase names guessed from ancestor class names (last resort) */
+  guessedComponents: string[];
+}
+
 /**
- * Extract search tokens from element context:
- * 1. Individual CSS class name tokens from selectedElement + ancestors
- * 2. PascalCase component name guesses from ancestor class names
+ * Extract search tokens from element context.
+ *
+ * Priority:
+ *   1. reactComponentStack (real Fiber names) — exact, no guessing needed
+ *   2. className tokens from element + ancestors — fuzzy fallback
+ *   3. PascalCase guesses from ancestor class root tokens
  */
-function extractSearchTokens(ctx: ElementContext): { classTokens: string[]; componentNames: string[] } {
+function extractSearchTokens(ctx: ElementContext): SearchTokens {
+  // 1. Fiber components
+  const fiberComponents = (ctx.reactComponentStack ?? []).filter(
+    // Skip internal React names and very generic ones
+    (n) => n !== 'App' && n !== 'StrictMode' && n !== 'Router' && n.length > 2,
+  );
+
+  // 2. CSS class tokens
   const allClasses = [
     ctx.selectedElement.className,
     ...ctx.ancestors.map(a => a.className),
@@ -48,20 +67,17 @@ function extractSearchTokens(ctx: ElementContext): { classTokens: string[]; comp
     .split(/\s+/)
     .map(c => c.trim())
     .filter(c => c.length > 2);
-
-  // Deduplicate while preserving order
   const classTokens = [...new Set(allClasses)];
 
-  // Derive component name guesses: longest class tokens in ancestors usually
-  // correspond to a component root (e.g. "user-profile-card" → "UserProfileCard")
-  const componentNames = [...new Set(
+  // 3. Guessed PascalCase component names from ancestor root class names
+  const guessedComponents = [...new Set(
     ctx.ancestors
       .map(a => a.className.split(/\s+/)[0])
       .filter(c => c.length > 4 && c.includes('-'))
-      .map(kebabToPascal)
+      .map(kebabToPascal),
   )];
 
-  return { classTokens, componentNames };
+  return { fiberComponents, classTokens, guessedComponents };
 }
 
 // ── Line-level search ─────────────────────────────────────────────────────────
@@ -84,18 +100,40 @@ function scoreLine(snippet: string, token: string): number {
   return score;
 }
 
+/** Score bonus for a line that declares a component with this exact name */
+function scoreComponentDefinition(snippet: string, name: string): number {
+  // Reward export/function/const/class declarations that name the component
+  let score = 0;
+  const patterns = [
+    `function ${name}`,
+    `const ${name}`,
+    `class ${name}`,
+    `export function ${name}`,
+    `export const ${name}`,
+    `export default function ${name}`,
+  ];
+  if (patterns.some(p => snippet.includes(p))) score += 8; // very strong signal
+  else if (snippet.includes(name)) score += 3;             // import/usage mention
+  if (snippet.trim().startsWith('//') || snippet.trim().startsWith('*')) score = 0;
+  return score;
+}
+
 /**
- * Search all source files for occurrences of the given tokens.
- * Returns deduplicated, scored, and sorted matches.
+ * Search all source files for relevant component/class references.
+ *
+ * Three-tier search strategy:
+ *   Tier 1 — React Fiber component names (exact): look for function/const
+ *             declarations with these names across all files.  High confidence.
+ *   Tier 2 — className tokens: existing fuzzy line-score matching. Used when
+ *             Fiber names produce < 2 results.
+ *   Tier 3 — Guessed PascalCase names: last resort for pure DOM pages.
  */
 export function searchByContext(ctx: ElementContext, projectRoot: string): CodeReference[] {
-  const { classTokens, componentNames } = extractSearchTokens(ctx);
-
-  if (!classTokens.length && !componentNames.length) return [];
+  const { fiberComponents, classTokens, guessedComponents } = extractSearchTokens(ctx);
 
   const files = collectFiles(projectRoot);
   const rawMatches: RawMatch[] = [];
-  const seenLines = new Set<string>();     // "file:line" dedup key
+  const seenLines = new Set<string>(); // "file:line" dedup key
 
   for (const filePath of files) {
     let lines: string[];
@@ -109,51 +147,60 @@ export function searchByContext(ctx: ElementContext, projectRoot: string): CodeR
 
     for (let i = 0; i < lines.length; i++) {
       const rawLine = lines[i];
-      const lowerLine = rawLine.toLowerCase();
       const dedupeKey = `${relPath}:${i + 1}`;
       if (seenLines.has(dedupeKey)) continue;
 
-      // Check class token matches
-      for (const token of classTokens) {
-        if (lowerLine.includes(token.toLowerCase())) {
-          const score = scoreLine(rawLine, token);
-          if (score > 0) {
-            rawMatches.push({
-              file: relPath,
-              line: i + 1,
-              snippet: rawLine.trim().slice(0, 150),
-              score,
-              componentName,
-            });
-            seenLines.add(dedupeKey);
-            break; // one match per line is enough
-          }
+      // ── Tier 1: Fiber component names ─────────────────────────────────────
+      for (const name of fiberComponents) {
+        const s = scoreComponentDefinition(rawLine, name);
+        if (s > 0) {
+          rawMatches.push({
+            file: relPath,
+            line: i + 1,
+            snippet: rawLine.trim().slice(0, 150),
+            score: s + 5, // Fiber results get a base boost
+            componentName: name,
+          });
+          seenLines.add(dedupeKey);
+          break;
         }
       }
+      if (seenLines.has(dedupeKey)) continue;
 
-      // Also match component name mentions (e.g. <UserProfileCard or function UserProfileCard)
-      if (!seenLines.has(dedupeKey)) {
-        for (const compName of componentNames) {
-          if (rawLine.includes(compName)) {
+      // ── Tier 2: className tokens ───────────────────────────────────────────
+      for (const token of classTokens) {
+        if (rawLine.toLowerCase().includes(token.toLowerCase())) {
+          const s = scoreLine(rawLine, token);
+          if (s > 0) {
             rawMatches.push({
-              file: relPath,
-              line: i + 1,
+              file: relPath, line: i + 1,
               snippet: rawLine.trim().slice(0, 150),
-              score: scoreLine(rawLine, compName) + 1,
-              componentName,
+              score: s, componentName,
             });
             seenLines.add(dedupeKey);
             break;
           }
         }
       }
+      if (seenLines.has(dedupeKey)) continue;
+
+      // ── Tier 3: guessed PascalCase names ──────────────────────────────────
+      for (const name of guessedComponents) {
+        if (rawLine.includes(name)) {
+          rawMatches.push({
+            file: relPath, line: i + 1,
+            snippet: rawLine.trim().slice(0, 150),
+            score: scoreLine(rawLine, name) + 1,
+            componentName,
+          });
+          seenLines.add(dedupeKey);
+          break;
+        }
+      }
     }
   }
 
-  // Sort by score desc, then limit
-  rawMatches.sort((a, b) => b.score - a.score);
-
-  // Deduplicate by component file (keep highest-scored line per file)
+  // Deduplicate by file: keep the highest-scored line per file
   const byFile = new Map<string, RawMatch>();
   for (const m of rawMatches) {
     if (!byFile.has(m.file) || m.score > byFile.get(m.file)!.score) {
@@ -161,8 +208,14 @@ export function searchByContext(ctx: ElementContext, projectRoot: string): CodeR
     }
   }
 
-  return [...byFile.values()]
+  const results = [...byFile.values()]
     .sort((a, b) => b.score - a.score)
     .slice(0, 6)
     .map(({ file, line, snippet, componentName }) => ({ file, line, snippet, componentName }));
+
+  const tier = fiberComponents.length > 0 ? 'fiber' : classTokens.length > 0 ? 'className' : 'guess';
+  console.log(`[code-search] tier=${tier} | fiber=[${fiberComponents.join(',')}] | found ${results.length} ref(s)`);
+  results.forEach(r => console.log(`  📄 ${r.file}:${r.line}  ${r.snippet.slice(0, 60)}`));
+
+  return results;
 }

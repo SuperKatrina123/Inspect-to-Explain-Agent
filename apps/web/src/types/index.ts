@@ -16,6 +16,8 @@ export interface ElementContext {
   ancestors: AncestorNode[];
   siblings: SiblingNode[];
   nearbyTexts: string[];
+  /** React component names from Fiber tree, nearest → root. */
+  reactComponentStack: string[];
 }
 
 export type SourceType =

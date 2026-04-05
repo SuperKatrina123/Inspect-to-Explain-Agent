@@ -20,6 +20,54 @@ export interface InspectElementContext {
   ancestors: Array<{ tag: string; className: string; id: string }>;
   siblings: Array<{ tag: string; text: string; className: string }>;
   nearbyTexts: string[];
+  /**
+   * React component names read directly from the React Fiber tree,
+   * ordered nearest → root (e.g. ["OrderItemRow","OrderSummary","App"]).
+   * Empty array if React Fiber is not accessible (non-React page, production
+   * minified build, or the element is rendered outside React).
+   */
+  reactComponentStack: string[];
+}
+
+// ── React Fiber: read actual component tree ───────────────────────────────────
+
+/**
+ * Walk up the React Fiber tree starting from the given DOM element and
+ * collect names of every React component encountered (nearest first).
+ *
+ * React attaches the root fiber to DOM nodes under a key that starts with
+ * "__reactFiber$" (React 17+) or "__reactInternalInstance$" (React 15/16).
+ * Walking fiber.return gives the parent fiber; typeof fiber.type === 'function'
+ * means it's a React component (as opposed to a host element like 'div').
+ *
+ * Notes:
+ *   - Only works in development builds where function names are preserved.
+ *   - Anonymous components (() => <div>) are skipped gracefully.
+ *   - Non-React pages return an empty array.
+ */
+function getReactComponentStack(el: Element): string[] {
+  // Locate whichever internal fiber key React chose for this element
+  const fiberKey = Object.keys(el).find(
+    (k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'),
+  );
+  if (!fiberKey) return [];
+
+  let fiber: any = (el as any)[fiberKey];
+  const stack: string[] = [];
+
+  while (fiber) {
+    const type = fiber.type;
+    if (typeof type === 'function') {
+      const name: string | undefined = type.displayName || type.name;
+      // Skip very short names, internal React names, and duplicates
+      if (name && name.length > 1 && name !== 'Anonymous' && !stack.includes(name)) {
+        stack.push(name);
+      }
+    }
+    fiber = fiber.return; // walk toward the root
+  }
+
+  return stack;
 }
 
 // ── CSS selector generation ───────────────────────────────────────────────────
@@ -123,6 +171,8 @@ function extractContext(el: Element): InspectElementContext {
     ancestors,
     siblings,
     nearbyTexts: nearbyTexts.slice(0, 10),
+    // Real component tree from React Fiber — most reliable signal available
+    reactComponentStack: getReactComponentStack(el),
   };
 }
 
