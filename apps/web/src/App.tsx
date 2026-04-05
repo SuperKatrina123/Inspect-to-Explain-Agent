@@ -9,7 +9,8 @@ import { CompareModal } from './components/CompareModal';
 import { AnalysisResult, AnalysisStatus, HistoryEntry } from './types';
 import './App.css';
 
-const SERVER_URL = 'http://localhost:3001';
+// 使用相对路径，由 Vite proxy 转发到实际 server（见 vite.config.ts）
+const SERVER_URL = '';
 const DEMO_URL   = 'http://localhost:5174';
 
 function App() {

@@ -5,7 +5,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { HistoryEntry } from '../types';
 
-const SERVER_URL = 'http://localhost:3001';
+// 使用相对路径，由 Vite proxy 转发到实际 server（见 vite.config.ts）
+const SERVER_URL = '';
 
 export interface UseHistoryReturn {
   entries: HistoryEntry[];

@@ -6,3 +6,6 @@ dist/
 .env.*
 !.env.example
 apps/server/.history.json
+
+# web 本地环境变量（不提交）
+apps/web/.env.local
