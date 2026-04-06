@@ -30,9 +30,11 @@
 Inspect-to-Explain-Agent/
 ├── apps/
 │   ├── web/               React + Vite + TypeScript  (port 5173)  主界面
-│   └── server/            Node.js + Express + TypeScript (port 3001)  分析接口
+│   ├── server/            Node.js + Express + TypeScript (port 3001)  分析接口
+│   └── bookmarklet/       esbuild 构建，可注入任意页面的悬浮面板
 ├── demo/
 │   └── demo-app/          React + Vite  (port 5174)  被 inspect 的演示页面
+├── docs/                  架构文档 / 踩坑记录
 └── package.json           npm workspaces 根配置
 ```
 
@@ -62,10 +64,19 @@ apps/server/src/
 │   └── history.ts                 GET|DELETE /api/history[/:id]
 └── services/
     ├── mockRetrieval.ts           mock 推断逻辑（fallback）
-    ├── llmRetrieval.ts            LLM 调用编排（代码检索 → 构建 prompt → 调用 → 解析）
-    ├── codeSearch.ts              三层代码检索（Fiber > className > 猜测）
-    ├── promptBuilder.ts           系统提示词 + 用户消息构建
+    ├── llmRetrieval.ts            LLM 调用编排（代码检索 → SOA 扫描 → 构建 prompt → 调用 → 解析）
+    ├── codeSearch.ts              三层代码检索 + SOA endpoint grep
+    ├── promptBuilder.ts           系统提示词 + 用户消息构建（含网络上下文/SOA区块）
+    ├── dataMasker.ts              递归 PII 脱敏（手机/邮箱/身份证/银行卡/JWT等）
     └── historyStore.ts            内存 store + .history.json 持久化
+
+apps/bookmarklet/src/
+└── index.ts                       自包含 IIFE：浮动面板 + Fiber读取 + 网络录制 + SSR扫描
+
+docs/
+├── architecture.md                系统架构图 + 数据流
+├── real-world-gaps.md             demo与真实项目的差异分析
+└── troubleshooting.md             踩坑记录
 
 demo/demo-app/src/
 ├── App.tsx
@@ -186,17 +197,18 @@ SERVER_URL=http://localhost:3001 npm run build:bookmarklet
 {
   url: string;
   selectedElement: {
-    tag: string;
-    text: string;
-    className: string;
-    id: string;
-    selector: string;   // CSS selector
-    xpath: string;
+    tag: string; text: string; className: string;
+    id: string; selector: string; xpath: string;
   };
   ancestors: Array<{ tag: string; className: string; id: string }>;
   siblings:  Array<{ tag: string; text: string; className: string }>;
   nearbyTexts: string[];
   reactComponentStack: string[];  // React Fiber 组件名，nearest → root
+  networkContext?: {               // Bookmarklet 录制的网络上下文（可选）
+    filter: string;               // 路径 filter，如 "/restapi/soa2/"
+    requests: Array<{ method: string; endpoint: string; body: any; timestamp: number }>;
+    ssrData: Array<{ key: string; data: any }>;
+  };
 }
 ```
 
@@ -207,25 +219,26 @@ SERVER_URL=http://localhost:3001 npm run build:bookmarklet
   success: true;
   result: {
     elementText: string;
-    moduleName: string;             // e.g. "UserProfileCard"
-    candidateComponents: string[];  // e.g. ["UserProfileCard", "ProfileInfo"]
-    sourceType:                     // 字段来源类型
+    moduleName: string;             // e.g. "HotelListItem"
+    candidateComponents: string[];  // e.g. ["HotelListItem", "HotelCard"]
+    sourceType:
       | 'frontend_static'           // 前端硬编码静态文案
       | 'api_response'              // 接口数据驱动
       | 'config_driven'             // 配置数组驱动
       | 'derived_field'             // 计算/派生值
       | 'unknown_candidate';
     confidence: number;             // 0–1
-    evidence: string[];             // 推断依据
-    explanation: string;            // 自然语言解释
+    evidence: string[];
+    explanation: string;
     codeReferences?: Array<{        // 本地代码检索结果
-      file: string;
-      line: number;
-      snippet: string;
-      componentName: string;
+      file: string; line: number; snippet: string; componentName: string;
+    }>;
+    soaReferences?: Array<{         // SOA endpoint 静态检测结果（本地模式）
+      file: string; line: number; endpoint: string;
+      serviceId: string; methodName: string; snippet: string;
     }>;
     analysisMode: 'llm' | 'mock';
-    modelUsed?: string;             // e.g. "gpt-5.4"
+    modelUsed?: string;
   }
 }
 ```
@@ -262,100 +275,73 @@ SERVER_URL=http://localhost:3001 npm run build:bookmarklet
 
 ## 🗺️ 后续迭代方向
 
-- [x] **真实 LLM 接入** — 接入 OpenAI 兼容 API（gpt-5.4 via proxy），LLM 生成结构化解释
+- [x] **真实 LLM 接入** — 接入 OpenAI 兼容 API，LLM 生成结构化解释，支持自定义 base URL / 模型
 - [x] **本地代码检索** — 三层降级策略（React Fiber 组件名 > className token > PascalCase 猜测），定位源文件
 - [x] **历史记录** — 每次 inspect 自动持久化（`.history.json`），支持展开详情、回溯、并排对比
 - [x] **Diff 高亮对比** — 并排对比差异字段橙色高亮、组件芯片 unique/absent 区分、置信度 Δ 徽章
 - [x] **React Fiber 组件检测** — 点击时直接读取 `__reactFiber$` 获取真实组件栈，彻底替代 className 猜测
+- [x] **Bookmarklet** — 可注入任意页面，拖拽面板，网络请求录制，SSR 数据扫描，Server URL 运行时配置
+- [x] **SOA / BFF 接口静态检测** — 本地模式下自动 grep 候选组件的接口调用，作为数据来源的强信号
+- [x] **PII 脱敏** — server 侧递归脱敏响应体后再送 LLM
 - [ ] **VSCode 联动** — 点击 Code Reference 中的文件路径，通过 `vscode://` 协议跳转到源文件对应行
 - [ ] **导出报告** — 将单次或多次分析结果导出为 JSON / Markdown，方便粘贴到 code review / issue
-- [ ] **构建时组件映射（Build-time Map）** — 在构建阶段用 AST 解析生成 `componentName → file:line` 索引，作为 Fiber 不可用时（生产包 minify）的精确备用方案
-- [ ] **生产环境支持** — 通过 `data-component` 属性注入或 sourcemap 解析，使工具在 minified 生产包中也可工作
-- [ ] **多页面 / 多框架** — 扩展 inspectBridge 支持 Vue Devtools hook、Angular Ivy 等非 React 框架的组件树读取
+- [ ] **构建时组件映射** — 构建阶段用 AST 解析生成 `componentName → file:line` 索引，作为生产包 minify 后 Fiber 名失效的精确备用方案
+- [ ] **生产环境组件名还原** — 通过 `data-component` 属性注入或 sourcemap 解析，在 minified 生产包中还原真实组件名
+- [ ] **多框架支持** — 扩展支持 Vue Devtools hook、Angular Ivy 等非 React 框架的组件树读取
 
 ---
 
 ## 📋 变更记录
 
-### v0.7 — Bookmarklet 拖拽 + SOA 静态检测（2026-04-06）
+### v2 — Bookmarklet + 网络上下文 + SOA 检测（2026-04-06）
 
-**变更内容：**
-- Bookmarklet 面板支持拖拽移动（从标题栏拖动），位置自动保存到 localStorage
-- 新增 `searchSoaEndpoints()`：在代码搜索命中的候选组件文件中 grep SOA endpoint 调用（`/soa2/\d+/\w+`），作为 `api_response` 的强信号注入 LLM prompt
-- `types/index.ts` 新增 `SoaReference`，`AnalysisResult` 加 `soaReferences?`
-- Bookmarklet 结果面板新增 **SOA Endpoints** 区块展示静态检测到的接口
-- 新增 `docs/Agent.md` 方法论文档、`docs/troubleshooting.md` 踩坑记录
+**新增功能：**
+- 🔖 **Bookmarklet**：esbuild 构建自包含 IIFE，可注入任意页面；浮动面板支持**拖拽移动**，位置持久化到 localStorage
+- 🌐 **网络录制**：Inspect Mode ON 时才开始录制，路径 filter 可在面板配置（如 `/restapi/soa2/`）；`trimBody()` 防止大响应 413
+- 🗄️ **SSR 扫描**：自动检测 `__NEXT_DATA__`、`__NUXT__` 等及 `<script type="application/json">`
+- ⚙️ **Server URL 面板内可编辑**，localStorage 持久化，无需重新 build
+- 🔌 **SOA 静态检测**：`searchSoaEndpoints()` 在候选组件文件中 grep `/soa2/\d+/\w+`，注入 LLM prompt 作为 `api_response` 强信号
+- 🔒 **PII 脱敏**：`dataMasker.ts` 递归脱敏手机/邮箱/身份证/银行卡/JWT，server 侧处理后再送 LLM
+- 📝 **文档**：`docs/architecture.md`、`docs/real-world-gaps.md`、`docs/troubleshooting.md`
 
----
-
-### v0.6 — Bookmarklet + 网络上下文（2026-04-06）
-
-**变更内容：**
-- 新增 `apps/bookmarklet/`：esbuild 构建，可注入任意页面的自包含 IIFE
-- Bookmarklet 功能：浮动面板、Inspect Mode 开关、hover 高亮、Fiber 读取、元素采集、Analyze 按钮
-- 网络录制：Inspect Mode ON 时才开始，路径 filter 可配置，数组/字符串截断（`trimBody`）
-- SSR 数据扫描：`__NEXT_DATA__`、`__NUXT__` 等及 `<script type="application/json">`
-- Server URL 面板内可编辑，localStorage 持久化，无需 rebuild
-- 新增 `dataMasker.ts`：递归 PII 脱敏（手机号/邮箱/身份证/银行卡/JWT 等）
-- `promptBuilder.ts` 新增网络上下文区块，system prompt 加 SOA/网络信号优先级规则
-- Express body limit 从 1mb 提升到 5mb
+**首次端到端验证（真实生产页面）：**
+- 元素：`<span>2站达虹桥站，私享庭院500平草坪</span>`
+- 结果：`moduleName=HotelListItem`、`sourceType=api_response`、`confidence=89%`
+- 推理依据：SSR `__NEXT_DATA__` + SOA `xxxHotelInfoList` <!-- 真实方法名已脱敏 -->
 
 ---
 
-### v0.5 — React Fiber 组件检测（2026-04-05）
+### v1 — MVP → 本地代码检索 → LLM → 历史对比（2026-04-05）
 
-**变更内容：**
-- `inspectBridge.ts` 新增 `getReactComponentStack(el)`：点击时遍历 `__reactFiber$` 属性，沿 `.return` 链收集真实 React 组件名（nearest → root）
-- `ElementContext` 新增 `reactComponentStack: string[]` 字段
-- `codeSearch.ts` 重构为三层降级搜索：Fiber 组件名（精确定义行）> className token（模糊匹配）> 猜测 PascalCase
-- `promptBuilder.ts` 新增 `## React Component Stack` section，LLM 将其作为最强信号
-- 服务端日志新增 `tier=fiber/className/guess` 标记，方便调试
-
-**解决的问题：** className 在 Taro / CSS Modules / Tailwind / styled-components 项目中不可靠，Fiber 直读彻底绕过该限制。
-
----
-
-### v0.4 — 历史记录 + 并排对比（2026-04-05）
-
-**变更内容：**
-- `historyStore.ts`：内存 store + `.history.json` 文件持久化，服务重启自动加载，最多保留 100 条
-- 新增 History API：`GET /api/history`、`GET /api/history/:id`、`DELETE /api/history[/:id]`
-- `HistoryPanel.tsx`：可滚动历史列表，点击卡片展开完整详情（explanation / evidence / code ref）
-- `CompareModal.tsx`：并排 Diff 对比，差异字段橙色左边框 + `≠` 图标，unique/absent 组件芯片，置信度 Δ 徽章，顶部"N differences"汇总
-- `useHistory.ts` hook、`useInspectMode` 暴露 `setSelectedContext` 用于历史回溯
-- `restoringRef` 防止 restore 时触发重置分析 effect
-
----
-
-### v0.3 — 本地代码检索（2026-04-05）
-
-**变更内容：**
-- 新增 `codeSearch.ts`：递归扫描 `.tsx/.ts` 文件，className token 提取，行级相关度打分，每文件保留最高分一行，返回 top-6
-- `promptBuilder.ts` 新增 `## Local Code References` section，LLM 可直接引用真实文件路径
-- `AnalysisResultPanel.tsx` 新增 Code References 卡片（file:line + snippet 深色代码块）
-- `AnalysisResult` 类型新增 `codeReferences` 字段
-
----
-
-### v0.2 — 真实 LLM 接入（2026-04-05）
-
-**变更内容：**
-- 新增 `llmRetrieval.ts`：调用 OpenAI 兼容 API，strict JSON schema 输出，解析失败自动 fallback 到 mock
-- 新增 `promptBuilder.ts`：系统提示词（含 sourceType 枚举定义）+ 用户消息格式化
-- `USE_LLM` / `LLM_BASE_URL` / `LLM_MODEL` 环境变量控制，`.env.example` 模板
-- `AnalysisResult` 新增 `analysisMode: 'llm' | 'mock'` 和 `modelUsed` 字段
-- 面板标题新增 LLM / mock 模式徽章
-
----
-
-### v0.1 — MVP 初始版本（2026-04-05）
-
-**变更内容：**
+**v1.0 — MVP 初始版本**
 - Monorepo 脚手架（npm workspaces）：`apps/web` + `apps/server` + `demo/demo-app`
-- `inspectBridge.ts`：跨 iframe postMessage 机制，hover 高亮 + click 采集 + context 提取（tag / text / className / selector / XPath / ancestors / siblings / nearbyTexts）
+- `inspectBridge.ts`：跨 iframe postMessage，hover 高亮 + click 采集（tag / text / className / selector / XPath / ancestors / siblings / nearbyTexts）
 - Mock 分析服务：基于 className 正则模式匹配推断模块名 / sourceType / 置信度
 - 三栏面板 UI：SelectedElementPanel / AnalysisStatusPanel / AnalysisResultPanel
 - Demo 页：UserProfileCard / OrderSummary / MarketingBenefits，含四种字段来源类型
+
+**v1.1 — 真实 LLM 接入**
+- `llmRetrieval.ts`：OpenAI 兼容 API，strict JSON 输出，解析失败 fallback mock
+- `promptBuilder.ts`：系统提示词（sourceType 枚举）+ 用户消息格式化
+- `USE_LLM` / `LLM_BASE_URL` / `LLM_MODEL` 环境变量，`.env.example` 模板
+- 面板新增 LLM / mock 模式徽章
+
+**v1.2 — 本地代码检索**
+- `codeSearch.ts`：递归扫描 `.tsx/.ts`，className token 提取，行级相关度打分，top-6 返回
+- `promptBuilder.ts` 新增 `## Local Code References` section
+- `AnalysisResultPanel.tsx` 新增 Code References 卡片
+
+**v1.3 — 历史记录 + 并排对比**
+- `historyStore.ts`：内存 store + `.history.json` 持久化，最多 100 条
+- History API：`GET/DELETE /api/history[/:id]`
+- `HistoryPanel.tsx`：可滚动历史列表，展开详情 / Restore 回溯
+- `CompareModal.tsx`：并排 Diff，差异字段橙色高亮，置信度 Δ 徽章
+
+**v1.4 — React Fiber 组件检测**
+- `inspectBridge.ts` 新增 `getReactComponentStack(el)`：读取 `__reactFiber$`，沿 `.return` 链收集真实组件名
+- `codeSearch.ts` 重构为三层降级：Fiber 组件名 > className token > PascalCase 猜测
+- `promptBuilder.ts` 新增 `## React Component Stack` section
+- 解决了 Taro / CSS Modules / Tailwind 等项目 className 不可靠的问题
 
 ---
 

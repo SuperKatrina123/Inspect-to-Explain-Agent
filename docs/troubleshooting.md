@@ -32,7 +32,7 @@ IIFE 本身返回 `undefined`，不会触发页面跳转。
 
 **现象**  
 bookmarklet 里的 Server URL 在 build 时通过 esbuild `define` 注入，  
-换到不同的 server（本地 / Render / 公司内网）必须重新编译。
+换到不同的 server（本地 / 远端 / 公司内网）必须重新编译。
 
 **解决方案**  
 把 `SERVER` 从 build-time 常量改为**面板内可编辑的 input**，  
@@ -41,29 +41,24 @@ bookmarklet 里的 Server URL 在 build 时通过 esbuild `define` 注入，
 
 ---
 
-### 3. Render 免费版冷启动超时（公司网络代理）
+### 3. 远端 Server 冷启动超时（公司网络代理）
 
 **现象**  
-从公司网络请求 `https://inspect-to-explain-agent.onrender.com` 时，  
-`curl` 返回 `HTTP 000`（exit code 28），loading 无限等待。
+请求远端部署的 server 时，`curl` 返回 `HTTP 000`（exit code 28），loading 无限等待。
 
 **根本原因**  
-Render 免费版服务 15 分钟无请求后进入休眠，冷启动需 30～60 秒。  
+部分免费云平台服务会在无流量后进入休眠，冷启动需要 30～60 秒。  
 公司 HTTP 代理的连接超时比冷启动时间短，导致连接在服务启动前就被断开。
 
-**解决方案（短期）**  
-本地启动 `apps/server`，bookmarklet 面板里 `server:` 改为 `http://localhost:3001`。
-
-**后续方向**  
-- 升级 Render 付费版（无冷启动）
-- 或部署到内网可访问的服务器
+**解决方案**  
+在本地运行 server（`npm run dev --workspace=apps/server`），bookmarklet 面板里 `server:` 填 `http://localhost:3001`。
 
 ---
 
 ### 4. `record path` filter 含义不清晰
 
 **现象**  
-用户把 `https://m.ctrip.com/restapi/soa2/31454/fetchHotelInfoList` 完整 URL  
+用户把 `https://example.com/restapi/soa2/xxxxx/xxxMethod` 完整 URL  
 填入 `record path:` 输入框，导致没有任何请求被录制。
 
 **根本原因**  
@@ -82,7 +77,7 @@ Render 免费版服务 15 分钟无请求后进入休眠，冷启动需 30～60 
 点击 Analyze 后，`POST /api/analyze-element` 返回 413。
 
 **根本原因**  
-bookmarklet 录制了完整的 API 响应体（携程 SOA 接口返回大量数据），  
+bookmarklet 录制了完整的 API 响应体（SOA 接口返回大量数据），  
 加上 SSR hydration data，整体 payload 超过 Express 默认的 `1mb` 限制。
 
 **解决方案（双端）**  
