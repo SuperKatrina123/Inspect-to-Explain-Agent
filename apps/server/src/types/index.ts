@@ -78,6 +78,25 @@ export interface CodeReference {
   componentName: string;
 }
 
+/**
+ * A SOA/BFF endpoint call found statically in source code.
+ * Extracted by grepping candidate component files for SOA URL patterns.
+ * e.g. /restapi/soa2/31454/fetchHotelInfoList
+ */
+export interface SoaReference {
+  /** Source file where the call was found, relative to project root */
+  file: string;
+  line: number;
+  /** Full matched path, e.g. "/restapi/soa2/31454/fetchHotelInfoList" */
+  endpoint: string;
+  /** Numeric SOA service ID, e.g. "31454" */
+  serviceId: string;
+  /** SOA method name, e.g. "fetchHotelInfoList" */
+  methodName: string;
+  /** The raw source line snippet for context */
+  snippet: string;
+}
+
 /** One persisted inspect session — context + analysis result */
 export interface HistoryEntry {
   id: string;
@@ -96,6 +115,11 @@ export interface AnalysisResult {
   explanation: string;
   /** Source file locations found by local code search */
   codeReferences?: CodeReference[];
+  /**
+   * SOA/BFF service calls found statically in candidate component files.
+   * Only populated when CODE_SEARCH_ROOT is set (local dev mode).
+   */
+  soaReferences?: SoaReference[];
   /** Which backend produced this result */
   analysisMode?: 'llm' | 'mock';
   /** Raw model name used, e.g. "gpt-5.4" */

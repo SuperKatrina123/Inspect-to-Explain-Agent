@@ -1,4 +1,4 @@
-import { ElementContext, CodeReference, NetworkContext } from '../types';
+import { ElementContext, CodeReference, SoaReference, NetworkContext } from '../types';
 import { maskSensitiveData } from './dataMasker';
 
 /**
@@ -39,6 +39,8 @@ Rules:
 - Output ONLY the JSON object. No \`\`\`json fences, no extra keys.
 - If uncertain, lower confidence and say so in explanation.
 - Base reasoning solely on the provided context; do not invent file paths.
+- When SOA references are provided, they are STRONG evidence that the element's data comes from that service. Set sourceType to "api_response" unless there is clear counter-evidence.
+- If the SOA method name semantically matches the element content (e.g. "fetchHotelInfoList" → hotel price/name), confidence should be ≥ 0.85.
 - When network data is provided, it is the strongest signal for sourceType. Prioritize it.
 - If the element's text appears in a network response body, sourceType is almost certainly "api_response" or "derived_field".
 - If SSR hydration data is provided, treat it as equivalent to an API response.
@@ -90,7 +92,7 @@ function buildNetworkSection(net: NetworkContext): string {
  * so the LLM has maximum signal in minimum tokens.
  * Optionally includes local code search results and network context.
  */
-export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]): string {
+export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[], soaRefs?: SoaReference[]): string {
   const { selectedElement: el, ancestors, siblings, nearbyTexts, url, reactComponentStack, networkContext } = ctx;
 
   const ancestorChain = ancestors
@@ -142,6 +144,14 @@ ${fiberSection}${networkSection}${codeRefs && codeRefs.length > 0 ? `
 The following source file locations were found by searching the local codebase. Use these to ground your analysis in the actual code:
 
 ${codeRefs.map((r) => `  📄 ${r.file}:${r.line} [${r.componentName}]\n     ${r.snippet}`).join('\n\n')}
+` : ''}${soaRefs && soaRefs.length > 0 ? `
+## SOA / BFF Service Calls (found statically in candidate component files)
+
+These backend service endpoints were found by scanning the source code of the candidate components above.
+This is STRONG evidence that the element's data is fetched from one of these services (sourceType = "api_response").
+Match the element text / context to the most semantically relevant method name.
+
+${soaRefs.map((r) => `  🔌 ${r.endpoint}\n     method: ${r.methodName}  serviceId: ${r.serviceId}\n     found in: ${r.file}:${r.line}\n     snippet: ${r.snippet}`).join('\n\n')}
 ` : ''}
 ---
 Analyze this element and return the JSON result.`;

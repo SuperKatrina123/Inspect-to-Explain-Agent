@@ -54,6 +54,15 @@ export interface CodeReference {
   componentName: string;
 }
 
+export interface SoaReference {
+  file: string;
+  line: number;
+  endpoint: string;
+  serviceId: string;
+  methodName: string;
+  snippet: string;
+}
+
 export interface AnalysisResult {
   elementText: string;
   moduleName: string;
@@ -63,6 +72,7 @@ export interface AnalysisResult {
   evidence: string[];
   explanation: string;
   codeReferences?: CodeReference[];
+  soaReferences?: SoaReference[];
   analysisMode?: 'llm' | 'mock';
   modelUsed?: string;
 }

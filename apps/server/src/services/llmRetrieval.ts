@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
-import { ElementContext, AnalysisResult, SourceType, CodeReference } from '../types';
+import { ElementContext, AnalysisResult, SourceType, CodeReference, SoaReference } from '../types';
 import { buildSystemPrompt, buildUserMessage } from './promptBuilder';
 import { analyzeElement as mockAnalyze } from './mockRetrieval';
-import { searchByContext } from './codeSearch';
+import { searchByContext, searchSoaEndpoints } from './codeSearch';
 
 // ── OpenAI-compatible client — base URL and model are read from env ──────────
 // Default to the user-configured proxy; override via LLM_BASE_URL / LLM_MODEL.
@@ -64,11 +64,15 @@ export async function analyzeElementWithLLM(ctx: ElementContext): Promise<Analys
 
   // ── Step 1: local code search ──────────────────────────────────────────────
   let codeRefs: CodeReference[] = [];
+  let soaRefs: SoaReference[] = [];
   if (projectRoot) {
     try {
       codeRefs = searchByContext(ctx, projectRoot);
       console.log(`[code-search] Found ${codeRefs.length} reference(s)`);
-      codeRefs.forEach(r => console.log(`  📄 ${r.file}:${r.line}  ${r.snippet.slice(0, 60)}`));
+      // Step 1b: scan candidate files for SOA endpoint calls
+      if (codeRefs.length > 0) {
+        soaRefs = searchSoaEndpoints(codeRefs, projectRoot);
+      }
     } catch (err) {
       console.warn('[code-search] Search failed:', err instanceof Error ? err.message : err);
     }
@@ -76,10 +80,10 @@ export async function analyzeElementWithLLM(ctx: ElementContext): Promise<Analys
     console.warn('[code-search] CODE_SEARCH_ROOT not set — skipping local search');
   }
 
-  // ── Step 2: call LLM with code refs injected into the prompt ──────────────
+  // ── Step 2: call LLM with code refs + SOA refs injected into the prompt ───
   const client = new OpenAI({ apiKey, baseURL });
   const systemPrompt = buildSystemPrompt();
-  const userMessage  = buildUserMessage(ctx, codeRefs);
+  const userMessage  = buildUserMessage(ctx, codeRefs, soaRefs);
 
   console.log(`[llm] Calling ${MODEL}…`);
 
@@ -106,11 +110,12 @@ export async function analyzeElementWithLLM(ctx: ElementContext): Promise<Analys
     return {
       ...result,
       codeReferences: codeRefs,
+      soaReferences: soaRefs.length > 0 ? soaRefs : undefined,
       analysisMode: 'llm',
       modelUsed: MODEL,
     };
   } catch (err) {
     console.error('[llm] API call failed:', err instanceof Error ? err.message : err);
-    return { ...mockAnalyze(ctx), codeReferences: codeRefs, analysisMode: 'mock' };
+    return { ...mockAnalyze(ctx), codeReferences: codeRefs, soaReferences: soaRefs.length > 0 ? soaRefs : undefined, analysisMode: 'mock' };
   }
 }
