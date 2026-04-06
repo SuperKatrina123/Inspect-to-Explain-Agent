@@ -1,0 +1,15 @@
+{
+  "name": "@inspect-agent/bookmarklet",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "ts-node build.ts",
+    "build:render": "SERVER_URL=https://inspect-to-explain-agent.onrender.com ts-node build.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "esbuild": "^0.20.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
