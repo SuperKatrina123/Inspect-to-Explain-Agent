@@ -14,19 +14,27 @@
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface NetworkMatch {
+interface RecordedRequest {
   method: string;
-  endpoint: string;       // e.g. "GET /api/v1/order/detail"
-  fieldPath: string;      // e.g. "data.items[0].price"
-  value: string;
+  endpoint: string;   // pathname only, e.g. "/api/v1/order/detail"
+  body: any;          // raw parsed JSON response — server will mask before LLM
   timestamp: number;
 }
 
-interface RecordedRequest {
-  method: string;
-  url: string;
-  body: any;              // parsed JSON response body
-  timestamp: number;
+/** SSR hydration data detected in the page (Next.js, Nuxt, custom BFF, etc.) */
+interface SsrData {
+  key: string;        // e.g. "__NEXT_DATA__", "__INITIAL_STATE__"
+  data: any;
+}
+
+/**
+ * Network context collected at click time.
+ * Sent to server as-is; server masks sensitive fields before passing to LLM.
+ */
+interface NetworkContext {
+  filter: string;              // URL path prefix filter the user set, e.g. "/api/"
+  requests: RecordedRequest[]; // requests recorded since Inspect Mode was turned ON
+  ssrData: SsrData[];          // SSR hydration objects found on the page
 }
 
 interface ElementContext {
@@ -43,7 +51,7 @@ interface ElementContext {
   siblings: Array<{ tag: string; text: string; className: string }>;
   nearbyTexts: string[];
   reactComponentStack: string[];
-  networkMatches: NetworkMatch[];   // values found in recorded API responses
+  networkContext: NetworkContext;
 }
 
 interface AnalysisResult {
@@ -80,133 +88,114 @@ if (window.__inspectAgent) {
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 function boot() {
-  const SERVER = __SERVER_URL__;
+  // Server URL is editable in the panel and persisted to localStorage.
+  // __SERVER_URL__ (build-time) is used only as the initial default.
+  const LS_KEY = '__ia_server';
+  let SERVER: string = localStorage.getItem(LS_KEY) || __SERVER_URL__;
 
   let inspectActive = false;
   let lastHighlighted: Element | null = null;
   let currentContext: ElementContext | null = null;
 
-  // ── Network interceptor ───────────────────────────────────────────────────────
-  // Start recording immediately so we capture requests made before user clicks.
-  // Capped at MAX_RECORDS entries (oldest dropped first).
+  // ── Network recorder ─────────────────────────────────────────────────────────
+  // Recording only starts when the user turns Inspect Mode ON (not on injection).
+  // Only requests whose path matches `networkFilter` are recorded (default /api/).
+  // Capped at MAX_RECORDS; oldest entry dropped when full.
 
-  const MAX_RECORDS = 60;
-  const networkLog: RecordedRequest[] = [];
+  const MAX_RECORDS = 30;
+  let networkFilter = '/api/';
+  let networkLog: RecordedRequest[] = [];
 
   const _origFetch = window.fetch.bind(window);
+  const _origXhrOpen = XMLHttpRequest.prototype.open;
+  const _origXhrSend = XMLHttpRequest.prototype.send;
 
+  function pathMatches(url: string): boolean {
+    try {
+      const path = new URL(url, window.location.href).pathname;
+      return path.includes(networkFilter);
+    } catch { return false; }
+  }
+
+  function pushRecord(method: string, url: string, body: any) {
+    if (!inspectActive) return;              // only record while inspect is ON
+    if (!pathMatches(url)) return;           // only record matching paths
+    const endpoint = (() => { try { return new URL(url, window.location.href).pathname; } catch { return url; } })();
+    networkLog.push({ method, endpoint, body, timestamp: Date.now() });
+    if (networkLog.length > MAX_RECORDS) networkLog.shift();
+  }
+
+  // Patch fetch
   window.fetch = async function patchedFetch(input: RequestInfo | URL, init?: RequestInit) {
     const method = (init?.method ?? 'GET').toUpperCase();
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
     const res = await _origFetch(input, init);
-    // Clone so the original response body stream is untouched
-    const clone = res.clone();
-    const ct = clone.headers.get('content-type') ?? '';
+    const ct = res.headers.get('content-type') ?? '';
     if (ct.includes('application/json')) {
-      clone.json().then((body: any) => {
-        networkLog.push({ method, url, body, timestamp: Date.now() });
-        if (networkLog.length > MAX_RECORDS) networkLog.shift();
-      }).catch(() => { /* non-JSON or parse error — ignore */ });
+      res.clone().json().then((body: any) => pushRecord(method, url, body)).catch(() => {});
     }
     return res;
   } as typeof fetch;
 
-  // XHR patch
-  const _origOpen = XMLHttpRequest.prototype.open;
-  const _origSend = XMLHttpRequest.prototype.send;
-
-  XMLHttpRequest.prototype.open = function patchedOpen(
-    this: XMLHttpRequest & { __ia_method?: string; __ia_url?: string },
+  // Patch XHR
+  XMLHttpRequest.prototype.open = function (
+    this: XMLHttpRequest & { __ia_m?: string; __ia_u?: string },
     method: string, url: string | URL, ...rest: any[]
   ) {
-    this.__ia_method = method.toUpperCase();
-    this.__ia_url = url.toString();
-    return (_origOpen as Function).call(this, method, url, ...rest);
+    this.__ia_m = method.toUpperCase();
+    this.__ia_u = url.toString();
+    return (_origXhrOpen as Function).call(this, method, url, ...rest);
   };
-
-  XMLHttpRequest.prototype.send = function patchedSend(
-    this: XMLHttpRequest & { __ia_method?: string; __ia_url?: string },
+  XMLHttpRequest.prototype.send = function (
+    this: XMLHttpRequest & { __ia_m?: string; __ia_u?: string },
     body?: Document | XMLHttpRequestBodyInit | null
   ) {
     this.addEventListener('load', function () {
       const ct = this.getResponseHeader('content-type') ?? '';
       if (ct.includes('application/json') && this.responseText) {
-        try {
-          const parsed = JSON.parse(this.responseText);
-          networkLog.push({
-            method: this.__ia_method ?? 'GET',
-            url: this.__ia_url ?? '',
-            body: parsed,
-            timestamp: Date.now(),
-          });
-          if (networkLog.length > MAX_RECORDS) networkLog.shift();
-        } catch { /* ignore */ }
+        try { pushRecord(this.__ia_m ?? 'GET', this.__ia_u ?? '', JSON.parse(this.responseText)); }
+        catch { /* ignore */ }
       }
     });
-    return _origSend.call(this, body);
+    return _origXhrSend.call(this, body);
   };
 
-  // Restore original fetch/XHR on destroy
   function restoreNetwork() {
     window.fetch = _origFetch;
-    XMLHttpRequest.prototype.open = _origOpen;
-    XMLHttpRequest.prototype.send = _origSend;
+    XMLHttpRequest.prototype.open = _origXhrOpen;
+    XMLHttpRequest.prototype.send = _origXhrSend;
   }
 
-  // ── Find matching field paths in a recorded response body ─────────────────────
-  // Recursively walks the JSON tree. Returns all paths where the value matches
-  // the search string (case-insensitive, trimmed).
+  // ── SSR hydration scanner ─────────────────────────────────────────────────────
+  // Scans well-known window keys and inline <script> tags for hydration data.
+  // Called once at click time so we always get the latest state.
 
-  function findInObject(obj: any, search: string, path = '', results: Array<{ path: string; value: string }> = []) {
-    if (results.length >= 5) return results; // cap per-request matches
-    if (obj === null || obj === undefined) return results;
+  const SSR_KEYS = [
+    '__NEXT_DATA__', '__NUXT__', '__INITIAL_STATE__', '__APP_STATE__',
+    '__REDUX_STATE__', '__PRELOADED_STATE__', '__SERVER_DATA__',
+  ];
 
-    if (typeof obj === 'string' || typeof obj === 'number') {
-      const val = String(obj).trim();
-      if (val.length > 0 && search.length > 0 && val.toLowerCase().includes(search.toLowerCase())) {
-        results.push({ path, value: val });
-      }
-      return results;
-    }
+  function scanSsrData(): SsrData[] {
+    const results: SsrData[] = [];
 
-    if (Array.isArray(obj)) {
-      for (let i = 0; i < obj.length && results.length < 5; i++) {
-        findInObject(obj[i], search, `${path}[${i}]`, results);
-      }
-      return results;
-    }
-
-    if (typeof obj === 'object') {
-      for (const key of Object.keys(obj)) {
-        if (results.length >= 5) break;
-        findInObject(obj[key], search, path ? `${path}.${key}` : key, results);
+    // 1. Well-known window globals
+    for (const key of SSR_KEYS) {
+      const val = (window as any)[key];
+      if (val && typeof val === 'object') {
+        results.push({ key, data: val });
       }
     }
+
+    // 2. Inline <script type="application/json"> tags (common in custom BFF setups)
+    document.querySelectorAll('script[type="application/json"]').forEach((el) => {
+      const id = el.id || el.getAttribute('data-id') || `inline-json-${results.length}`;
+      try {
+        const data = JSON.parse(el.textContent ?? '');
+        results.push({ key: id, data });
+      } catch { /* skip malformed */ }
+    });
 
     return results;
-  }
-
-  // Search all recorded requests for a given text, return top matches
-  function searchNetworkLog(text: string): NetworkMatch[] {
-    if (!text || text.length < 2) return [];
-    const matches: NetworkMatch[] = [];
-
-    for (const record of [...networkLog].reverse()) { // most recent first
-      if (matches.length >= 8) break;
-      const hits = findInObject(record.body, text);
-      for (const hit of hits) {
-        const urlObj = (() => { try { return new URL(record.url); } catch { return null; } })();
-        const endpoint = `${record.method} ${urlObj ? urlObj.pathname : record.url}`;
-        matches.push({
-          method: record.method,
-          endpoint,
-          fieldPath: hit.path,
-          value: hit.value,
-          timestamp: record.timestamp,
-        });
-      }
-    }
-    return matches;
   }
 
   // ── Inject styles ────────────────────────────────────────────────────────────
@@ -278,6 +267,17 @@ function boot() {
     .__ia-expl { font-size:11px;color:#bac2de;line-height:1.6;margin-top:6px; }
     .__ia-err  { font-size:11px;color:#f38ba8; }
     .__ia-empty { font-size:11px;color:#6c7086;font-style:italic; }
+    .__ia-filter-row { display:flex; align-items:center; gap:6px; margin-top:8px; }
+    .__ia-filter-lbl { font-size:10px; color:#6c7086; white-space:nowrap; }
+    .__ia-filter-input {
+      flex:1; background:#313244; border:1px solid #45475a; border-radius:4px;
+      color:#cdd6f4; font:11px/1 monospace; padding:3px 6px; outline:none;
+    }
+    .__ia-filter-input:focus { border-color:#89b4fa; }
+    .__ia-net-row { margin-top:4px; padding:4px 6px; background:#181825; border-radius:4px; }
+    .__ia-net-ep   { font-size:10px; color:#89b4fa; }
+    .__ia-net-count { font-size:10px; color:#a6e3a1; margin-left:4px; }
+    .__ia-net-ssr  { font-size:10px; color:#f9e2af; margin-top:2px; }
   `;
   document.head.appendChild(styleEl);
 
@@ -291,10 +291,19 @@ function boot() {
       <button class="__ia-x" id="__ia-x">✕</button>
     </div>
     <div class="__ia-sec">
-      <div class="__ia-row">
+      <div class="__ia-filter-row">
+        <span class="__ia-filter-lbl">server:</span>
+        <input class="__ia-filter-input" id="__ia-server" placeholder="http://localhost:3001" title="Analyze server URL (saved to localStorage)" />
+      </div>
+      <div class="__ia-row" style="margin-top:8px">
         <span class="__ia-st" id="__ia-st">Inspect OFF</span>
         <button class="__ia-tbtn off" id="__ia-tb">Enable</button>
       </div>
+      <div class="__ia-filter-row">
+        <span class="__ia-filter-lbl">record path:</span>
+        <input class="__ia-filter-input" id="__ia-filter" value="/api/" title="Only record XHR/fetch requests whose path contains this string" />
+      </div>
+      <div style="font-size:10px;color:#6c7086;margin-top:4px" id="__ia-net-stat">Recording starts when Inspect is ON</div>
     </div>
     <div class="__ia-sec">
       <div class="__ia-lbl">Selected Element</div>
@@ -311,15 +320,28 @@ function boot() {
   `;
   document.body.appendChild(panel);
 
-  const elSt    = panel.querySelector('#__ia-st')    as HTMLElement;
-  const elTb    = panel.querySelector('#__ia-tb')    as HTMLButtonElement;
-  const elX     = panel.querySelector('#__ia-x')     as HTMLButtonElement;
-  const elEmpty = panel.querySelector('#__ia-empty') as HTMLElement;
-  const elCtx   = panel.querySelector('#__ia-ctx')   as HTMLElement;
-  const elAsec  = panel.querySelector('#__ia-asec')  as HTMLElement;
-  const elAbtn  = panel.querySelector('#__ia-abtn')  as HTMLButtonElement;
-  const elRsec  = panel.querySelector('#__ia-rsec')  as HTMLElement;
-  const elRbody = panel.querySelector('#__ia-rbody') as HTMLElement;
+  const elSt      = panel.querySelector('#__ia-st')      as HTMLElement;
+  const elTb      = panel.querySelector('#__ia-tb')      as HTMLButtonElement;
+  const elX       = panel.querySelector('#__ia-x')       as HTMLButtonElement;
+  const elServer  = panel.querySelector('#__ia-server')  as HTMLInputElement;
+  const elFilter  = panel.querySelector('#__ia-filter')  as HTMLInputElement;
+  const elNetStat = panel.querySelector('#__ia-net-stat') as HTMLElement;
+  const elEmpty   = panel.querySelector('#__ia-empty')   as HTMLElement;
+  const elCtx     = panel.querySelector('#__ia-ctx')     as HTMLElement;
+  const elAsec    = panel.querySelector('#__ia-asec')    as HTMLElement;
+  const elAbtn    = panel.querySelector('#__ia-abtn')    as HTMLButtonElement;
+  const elRsec    = panel.querySelector('#__ia-rsec')    as HTMLElement;
+  const elRbody   = panel.querySelector('#__ia-rbody')   as HTMLElement;
+
+  // Initialise server input from stored value
+  elServer.value = SERVER;
+  elServer.addEventListener('change', () => {
+    SERVER = elServer.value.trim().replace(/\/$/, '');
+    localStorage.setItem(LS_KEY, SERVER);
+  });
+
+  // Sync filter input → networkFilter state
+  elFilter.addEventListener('input', () => { networkFilter = elFilter.value.trim() || '/'; });
 
   // ── Inspect toggle ───────────────────────────────────────────────────────────
 
@@ -329,6 +351,7 @@ function boot() {
 
   function activate() {
     inspectActive = true;
+    networkLog = [];   // fresh log every time inspect is turned ON
     document.body.classList.add('__ia-mode');
     document.addEventListener('mouseover', onOver);
     document.addEventListener('mouseout', onOut);
@@ -336,6 +359,7 @@ function boot() {
     elSt.textContent = 'Inspect ON';
     elTb.textContent = 'Disable';
     elTb.className = '__ia-tbtn on';
+    elNetStat.textContent = `📡 Recording "${networkFilter}" requests…`;
   }
 
   function deactivate() {
@@ -348,6 +372,7 @@ function boot() {
     elSt.textContent = 'Inspect OFF';
     elTb.textContent = 'Enable';
     elTb.className = '__ia-tbtn off';
+    elNetStat.textContent = `Recorded ${networkLog.length} request${networkLog.length !== 1 ? 's' : ''}`;
   }
 
   function destroy() {
@@ -393,7 +418,7 @@ function boot() {
   function renderContext(ctx: ElementContext) {
     const el = ctx.selectedElement;
     const stack = ctx.reactComponentStack;
-    const nets = ctx.networkMatches;
+    const net = ctx.networkContext;
     elEmpty.style.display = 'none';
     elCtx.style.display = '';
     elCtx.innerHTML = `
@@ -406,16 +431,15 @@ function boot() {
           <span class="__ia-k">components</span><br/>
           ${stack.map(n => `<span class="__ia-chip">${esc(n)}</span>`).join('')}
         </div>` : ''}
-      ${nets.length ? `
-        <div style="margin-top:8px">
-          <span class="__ia-k">📡 network</span>
-          <span class="__ia-net-count">${nets.length} match${nets.length > 1 ? 'es' : ''}</span>
-          ${nets.slice(0, 3).map(m => `
-            <div class="__ia-net-row">
-              <div class="__ia-net-ep">${esc(m.endpoint)}</div>
-              <div class="__ia-net-path">${esc(m.fieldPath)}</div>
-            </div>`).join('')}
-        </div>` : `<div style="margin-top:6px;font-size:10px;color:#6c7086">📡 no network match — may be static</div>`}
+      <div style="margin-top:8px">
+        <span class="__ia-k">📡 network</span>
+        <span class="__ia-net-count">${net.requests.length} request${net.requests.length !== 1 ? 's' : ''}</span>
+        ${net.requests.slice(0, 3).map(r =>
+          `<div class="__ia-net-row"><div class="__ia-net-ep">${esc(r.method)} ${esc(r.endpoint)}</div></div>`
+        ).join('')}
+        ${net.ssrData.length ? `
+          <div class="__ia-net-ssr">🗄 SSR: ${net.ssrData.map(s => esc(s.key)).join(', ')}</div>` : ''}
+      </div>
     `;
   }
 
@@ -584,8 +608,11 @@ function boot() {
       siblings,
       nearbyTexts: nearbyTexts.slice(0, 10),
       reactComponentStack: getReactComponentStack(el),
-      // Search recorded network responses for this element's text
-      networkMatches: searchNetworkLog((el.textContent ?? '').trim()),
+      networkContext: {
+        filter: networkFilter,
+        requests: [...networkLog],   // snapshot at click time
+        ssrData: scanSsrData(),
+      },
     };
   }
 

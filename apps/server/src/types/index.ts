@@ -19,6 +19,31 @@ export interface SiblingNode {
   className: string;
 }
 
+/** A single API request recorded by the bookmarklet while Inspect Mode was ON */
+export interface RecordedRequest {
+  method: string;
+  endpoint: string;  // URL pathname only, e.g. "/api/v1/order/detail"
+  body: any;         // raw JSON response — will be masked before LLM
+  timestamp: number;
+}
+
+/** SSR hydration object detected in the page (Next.js, Nuxt, custom BFF, etc.) */
+export interface SsrData {
+  key: string;   // e.g. "__NEXT_DATA__"
+  data: any;
+}
+
+/**
+ * Network context collected by the bookmarklet at click time.
+ * Contains only requests matching the user-configured path filter,
+ * recorded since Inspect Mode was turned ON.
+ */
+export interface NetworkContext {
+  filter: string;              // path prefix filter, e.g. "/api/"
+  requests: RecordedRequest[]; // recorded API responses (to be masked server-side)
+  ssrData: SsrData[];          // SSR hydration data found on the page
+}
+
 export interface ElementContext {
   url: string;
   selectedElement: SelectedElement;
@@ -31,6 +56,8 @@ export interface ElementContext {
    * Empty array when Fiber is not accessible.
    */
   reactComponentStack: string[];
+  /** Network data collected by the bookmarklet — undefined when using iframe demo mode */
+  networkContext?: NetworkContext;
 }
 
 export type SourceType =

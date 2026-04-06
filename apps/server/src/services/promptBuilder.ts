@@ -1,4 +1,5 @@
-import { ElementContext, CodeReference } from '../types';
+import { ElementContext, CodeReference, NetworkContext } from '../types';
+import { maskSensitiveData } from './dataMasker';
 
 /**
  * Builds the system prompt that instructs the LLM on the analysis task,
@@ -19,7 +20,7 @@ A developer has clicked on a DOM element in a React web page. You will receive t
    - "unknown_candidate": insufficient signal to determine
 
 4. A **confidence** score 0.0–1.0 for your overall judgment.
-5. A list of concrete **evidence** items that support your reasoning (class names, ancestor chain, text pattern, etc.).
+5. A list of concrete **evidence** items that support your reasoning (class names, ancestor chain, text pattern, network data, etc.).
 6. A clear one-paragraph **explanation** in English suitable for a developer.
 
 ## Output format (STRICT JSON — no markdown, no prose outside the object)
@@ -37,16 +38,60 @@ A developer has clicked on a DOM element in a React web page. You will receive t
 Rules:
 - Output ONLY the JSON object. No \`\`\`json fences, no extra keys.
 - If uncertain, lower confidence and say so in explanation.
-- Base reasoning solely on the provided context; do not invent file paths.`;
+- Base reasoning solely on the provided context; do not invent file paths.
+- When network data is provided, it is the strongest signal for sourceType. Prioritize it.
+- If the element's text appears in a network response body, sourceType is almost certainly "api_response" or "derived_field".
+- If SSR hydration data is provided, treat it as equivalent to an API response.
+- If no network match exists and the text looks like a static label, lean toward "frontend_static".`;
+}
+
+/**
+ * Formats the NetworkContext into a compact LLM-readable section.
+ * Response bodies are recursively masked for PII before inclusion.
+ * Bodies are depth-limited and truncated to keep token count reasonable.
+ */
+function buildNetworkSection(net: NetworkContext): string {
+  if (!net.requests.length && !net.ssrData.length) return '';
+
+  const lines: string[] = [
+    `## Network Context (recorded while Inspect Mode was ON, filter: "${net.filter}")`,
+    '',
+    'Use this as the PRIMARY signal for sourceType. Look for the element text in response bodies.',
+    '',
+  ];
+
+  if (net.ssrData.length) {
+    lines.push('### SSR Hydration Data');
+    for (const ssr of net.ssrData.slice(0, 3)) {
+      const masked = maskSensitiveData(ssr.data);
+      const json = JSON.stringify(masked, null, 2);
+      // Truncate large SSR blobs
+      const truncated = json.length > 2000 ? json.slice(0, 2000) + '\n… (truncated)' : json;
+      lines.push(`\n**${ssr.key}**\n\`\`\`json\n${truncated}\n\`\`\``);
+    }
+    lines.push('');
+  }
+
+  if (net.requests.length) {
+    lines.push(`### API Responses (${net.requests.length} recorded)`);
+    for (const req of net.requests.slice(0, 6)) {
+      const masked = maskSensitiveData(req.body);
+      const json = JSON.stringify(masked, null, 2);
+      const truncated = json.length > 1500 ? json.slice(0, 1500) + '\n… (truncated)' : json;
+      lines.push(`\n**${req.method} ${req.endpoint}**\n\`\`\`json\n${truncated}\n\`\`\``);
+    }
+  }
+
+  return '\n' + lines.join('\n') + '\n';
 }
 
 /**
  * Serialises the ElementContext into a compact, readable user message
  * so the LLM has maximum signal in minimum tokens.
- * Optionally includes local code search results for grounded analysis.
+ * Optionally includes local code search results and network context.
  */
 export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]): string {
-  const { selectedElement: el, ancestors, siblings, nearbyTexts, url, reactComponentStack } = ctx;
+  const { selectedElement: el, ancestors, siblings, nearbyTexts, url, reactComponentStack, networkContext } = ctx;
 
   const ancestorChain = ancestors
     .map((a) => {
@@ -66,6 +111,9 @@ export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]
   const fiberSection = reactComponentStack && reactComponentStack.length > 0
     ? `\n## React Component Stack (from Fiber tree — most reliable signal)\n\n${reactComponentStack.join(' → ')}\n\nThe nearest component to the selected element is listed first. Use this as your primary signal for moduleName and candidateComponents.\n`
     : '';
+
+  // Network section — strongest signal for sourceType
+  const networkSection = networkContext ? buildNetworkSection(networkContext) : '';
 
   return `## Selected Element
 
@@ -88,7 +136,7 @@ ${siblingList || '(none)'}
 ## Nearby Visible Texts
 
 ${nearbyTexts.slice(0, 8).map((t) => `  • "${t.slice(0, 80)}"`).join('\n') || '(none)'}
-${fiberSection}${codeRefs && codeRefs.length > 0 ? `
+${fiberSection}${networkSection}${codeRefs && codeRefs.length > 0 ? `
 ## Local Code References (found by static search)
 
 The following source file locations were found by searching the local codebase. Use these to ground your analysis in the actual code:

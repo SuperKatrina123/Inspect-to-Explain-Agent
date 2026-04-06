@@ -10,6 +10,24 @@ export interface SelectedElement {
 export interface AncestorNode { tag: string; className: string; id: string }
 export interface SiblingNode  { tag: string; text: string; className: string }
 
+export interface RecordedRequest {
+  method: string;
+  endpoint: string;
+  body: any;
+  timestamp: number;
+}
+
+export interface SsrData {
+  key: string;
+  data: any;
+}
+
+export interface NetworkContext {
+  filter: string;
+  requests: RecordedRequest[];
+  ssrData: SsrData[];
+}
+
 export interface ElementContext {
   url: string;
   selectedElement: SelectedElement;
@@ -18,6 +36,8 @@ export interface ElementContext {
   nearbyTexts: string[];
   /** React component names from Fiber tree, nearest → root. */
   reactComponentStack: string[];
+  /** Network context from bookmarklet — undefined in iframe/demo mode */
+  networkContext?: NetworkContext;
 }
 
 export type SourceType =
