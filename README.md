@@ -15,10 +15,12 @@
 - ⚙️ **结构化分析** — 后端根据 context 推断模块归属、候选组件、字段来源类型、置信度
 - 🤖 **真实 LLM 分析** — 接入 OpenAI 兼容 API，LLM 结合代码检索上下文生成解释
 - 📂 **本地代码检索** — 以 React Fiber 组件名为主、className token 为辅，三层降级策略定位源文件
+- 🔌 **SOA 接口静态检测** — 本地模式下自动 grep 候选组件文件中的 SOA endpoint 调用，作为 `api_response` 的强信号
 - 🕑 **历史记录** — 每次 inspect 自动保存，可展开详情、一键回溯、选两条对比
 - ⚖️ **并排对比 + Diff 高亮** — 对比两次 inspect，差异字段橙色边框高亮，置信度 Δ 徽章
 - 📊 **可视化结果面板** — 三栏面板展示选中信息、分析状态与分析结果
 - 🧩 **Demo 页面** — 内置包含多种字段来源类型（静态文案 / API数据 / 配置驱动 / 派生字段）的演示页
+- 🔖 **Bookmarklet** — 可注入任意网页的悬浮面板，支持拖拽移动、网络请求录制、SSR 数据扫描、Server URL 面板内配置
 
 ---
 
@@ -139,6 +141,39 @@ npm run dev
 
 ---
 
+### 🔖 Bookmarklet（注入任意页面）
+
+无需部署前端项目，可将 Inspector 直接注入到**任意网页**（包括生产环境）。
+
+#### 构建
+
+```bash
+# 默认指向 Render 部署地址
+npm run build:bookmarklet
+
+# 指向本地 server
+SERVER_URL=http://localhost:3001 npm run build:bookmarklet
+```
+
+#### 安装
+
+1. 复制 `apps/bookmarklet/dist/bookmarklet-url.txt` 的内容
+2. 浏览器新建书签，将 URL 粘贴进去（名称随意，如 `🔍 Inspect Agent`）
+
+#### 使用
+
+1. 打开任意网页，点击书签 → 右上角浮现悬浮面板
+2. 在面板顶部 **server:** 输入框填入你的分析 server 地址（自动保存到 localStorage）
+3. 设置 **record path:** 过滤要录制的接口路径（如 `/restapi/soa2/`）
+4. 点击 **Enable** 开启 Inspect Mode，开始录制匹配的网络请求
+5. 点击页面元素 → 面板展示 context（含 React 组件栈、已录制请求数、SSR 数据）
+6. 点击 **🔍 Analyze Element** 发送给 server 分析
+7. 拖拽面板 **标题栏** 可移动位置（自动保存）；再次点击书签可切换 Inspect ON/OFF；关闭按钮（✕）完全移除面板
+
+> **本地模式**：启动 `apps/server` 并设置 `CODE_SEARCH_ROOT`，server 会自动静态扫描 SOA 调用，无需录制网络请求即可推断数据来源。
+
+---
+
 ## 📡 API
 
 ### `POST /api/analyze-element`
@@ -241,6 +276,31 @@ npm run dev
 ---
 
 ## 📋 变更记录
+
+### v0.7 — Bookmarklet 拖拽 + SOA 静态检测（2026-04-06）
+
+**变更内容：**
+- Bookmarklet 面板支持拖拽移动（从标题栏拖动），位置自动保存到 localStorage
+- 新增 `searchSoaEndpoints()`：在代码搜索命中的候选组件文件中 grep SOA endpoint 调用（`/soa2/\d+/\w+`），作为 `api_response` 的强信号注入 LLM prompt
+- `types/index.ts` 新增 `SoaReference`，`AnalysisResult` 加 `soaReferences?`
+- Bookmarklet 结果面板新增 **SOA Endpoints** 区块展示静态检测到的接口
+- 新增 `docs/Agent.md` 方法论文档、`docs/troubleshooting.md` 踩坑记录
+
+---
+
+### v0.6 — Bookmarklet + 网络上下文（2026-04-06）
+
+**变更内容：**
+- 新增 `apps/bookmarklet/`：esbuild 构建，可注入任意页面的自包含 IIFE
+- Bookmarklet 功能：浮动面板、Inspect Mode 开关、hover 高亮、Fiber 读取、元素采集、Analyze 按钮
+- 网络录制：Inspect Mode ON 时才开始，路径 filter 可配置，数组/字符串截断（`trimBody`）
+- SSR 数据扫描：`__NEXT_DATA__`、`__NUXT__` 等及 `<script type="application/json">`
+- Server URL 面板内可编辑，localStorage 持久化，无需 rebuild
+- 新增 `dataMasker.ts`：递归 PII 脱敏（手机号/邮箱/身份证/银行卡/JWT 等）
+- `promptBuilder.ts` 新增网络上下文区块，system prompt 加 SOA/网络信号优先级规则
+- Express body limit 从 1mb 提升到 5mb
+
+---
 
 ### v0.5 — React Fiber 组件检测（2026-04-05）
 

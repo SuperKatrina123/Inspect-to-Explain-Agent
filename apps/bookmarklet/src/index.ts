@@ -63,6 +63,7 @@ interface AnalysisResult {
   evidence: string[];
   explanation: string;
   codeReferences?: Array<{ file: string; line: number; snippet: string }>;
+  soaReferences?: Array<{ endpoint: string; serviceId: string; methodName: string; file: string; line: number }>;
   analysisMode: string;
   modelUsed?: string;
 }
@@ -117,11 +118,29 @@ function boot() {
     } catch { return false; }
   }
 
+  /**
+   * Recursively trim a JSON object/array to keep payload small.
+   * Arrays are capped at maxArr items; strings longer than 300 chars are truncated.
+   */
+  function trimBody(val: any, depth: number, maxArr: number): any {
+    if (depth > 4) return '…';
+    if (typeof val === 'string') return val.length > 300 ? val.slice(0, 300) + '…' : val;
+    if (Array.isArray(val)) return val.slice(0, maxArr).map(v => trimBody(v, depth + 1, maxArr));
+    if (val && typeof val === 'object') {
+      const out: Record<string, any> = {};
+      for (const k of Object.keys(val).slice(0, 40)) out[k] = trimBody(val[k], depth + 1, maxArr);
+      return out;
+    }
+    return val;
+  }
+
   function pushRecord(method: string, url: string, body: any) {
     if (!inspectActive) return;              // only record while inspect is ON
     if (!pathMatches(url)) return;           // only record matching paths
     const endpoint = (() => { try { return new URL(url, window.location.href).pathname; } catch { return url; } })();
-    networkLog.push({ method, endpoint, body, timestamp: Date.now() });
+    // Truncate large response bodies to keep payload manageable
+    const trimmed = trimBody(body, 0, 30);
+    networkLog.push({ method, endpoint, body: trimmed, timestamp: Date.now() });
     if (networkLog.length > MAX_RECORDS) networkLog.shift();
   }
 
@@ -221,6 +240,7 @@ function boot() {
     .__ia-hd {
       display: flex; align-items: center; justify-content: space-between;
       padding: 10px 14px; border-bottom: 1px solid #313244; font-weight: 700;
+      cursor: move; user-select: none;
     }
     .__ia-x {
       cursor: pointer; background: none; border: none; color: #6c7086;
@@ -386,6 +406,57 @@ function boot() {
   elTb.addEventListener('click', toggle);
   elX.addEventListener('click', destroy);
 
+  // ── Drag to reposition panel ─────────────────────────────────────────────────
+  // Drag from the header bar; position stored in localStorage so it persists.
+
+  const LS_POS = '__ia_pos';
+  const elHd = panel.querySelector('.__ia-hd') as HTMLElement;
+
+  // Restore saved position
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_POS) ?? 'null');
+    if (saved?.x != null && saved?.y != null) {
+      panel.style.right = 'auto';
+      panel.style.left = `${saved.x}px`;
+      panel.style.top  = `${saved.y}px`;
+    }
+  } catch { /* ignore */ }
+
+  let dragOffX = 0, dragOffY = 0, dragging = false;
+
+  elHd.addEventListener('mousedown', (e: MouseEvent) => {
+    // Don't drag when clicking the close button
+    if ((e.target as Element).closest('.__ia-x')) return;
+    dragging = true;
+    const rect = panel.getBoundingClientRect();
+    dragOffX = e.clientX - rect.left;
+    dragOffY = e.clientY - rect.top;
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e: MouseEvent) => {
+    if (!dragging) return;
+    const x = e.clientX - dragOffX;
+    const y = e.clientY - dragOffY;
+    // Clamp to viewport
+    const maxX = window.innerWidth  - panel.offsetWidth;
+    const maxY = window.innerHeight - panel.offsetHeight;
+    const cx = Math.max(0, Math.min(x, maxX));
+    const cy = Math.max(0, Math.min(y, maxY));
+    panel.style.right = 'auto';
+    panel.style.left  = `${cx}px`;
+    panel.style.top   = `${cy}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    // Persist position
+    try {
+      localStorage.setItem(LS_POS, JSON.stringify({ x: parseInt(panel.style.left), y: parseInt(panel.style.top) }));
+    } catch { /* ignore */ }
+  });
+
   // ── Mouse event handlers ─────────────────────────────────────────────────────
 
   function onOver(e: MouseEvent) {
@@ -493,6 +564,16 @@ function boot() {
           <div class="__ia-lbl">Code References</div>
           ${r.codeReferences.slice(0, 3).map(ref =>
             `<div style="font-size:10px;color:#6c7086">${esc(ref.file)}:${ref.line}</div>`
+          ).join('')}
+        </div>` : ''}
+      ${r.soaReferences?.length ? `
+        <div style="margin-top:8px">
+          <div class="__ia-lbl">SOA Endpoints (from source code)</div>
+          ${r.soaReferences.slice(0, 4).map(ref =>
+            `<div class="__ia-net-row">
+              <div class="__ia-net-ep" title="${esc(ref.file)}:${ref.line}">${esc(ref.methodName)}</div>
+              <div style="font-size:10px;color:#6c7086">${esc(ref.endpoint)}</div>
+            </div>`
           ).join('')}
         </div>` : ''}
     `;
