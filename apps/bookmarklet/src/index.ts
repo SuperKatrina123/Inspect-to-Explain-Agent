@@ -478,6 +478,8 @@ function boot() {
     if (panel.contains(t)) return;
     e.preventDefault();
     e.stopPropagation();
+    t.classList.remove('__ia-hl');
+    if (lastHighlighted === t) lastHighlighted = null;
     currentContext = extractContext(t);
     renderContext(currentContext);
     elRsec.style.display = 'none';

@@ -199,7 +199,10 @@ function onClick(e: MouseEvent) {
   if (!active) return;
   e.preventDefault();
   e.stopPropagation();
-  const ctx = extractContext(e.target as Element);
+  const target = e.target as Element;
+  target.classList.remove('inspect-highlight');
+  if (lastHighlighted === target) lastHighlighted = null;
+  const ctx = extractContext(target);
   // Post context to parent web app
   window.parent.postMessage({ type: 'ELEMENT_SELECT', data: ctx }, '*');
 }
