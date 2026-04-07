@@ -42,8 +42,12 @@ function App() {
     setAnalysisError(null);
   }, [selectedContext]);
 
+  const abortRef = useRef<AbortController | null>(null);
+
   const handleAnalyze = useCallback(async () => {
     if (!selectedContext) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setAnalysisStatus('loading');
     setAnalysisError(null);
     try {
@@ -51,6 +55,7 @@ function App() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(selectedContext),
+        signal:  controller.signal,
       });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = await res.json();
@@ -59,10 +64,20 @@ function App() {
       // Refresh history list so the new entry appears immediately
       refreshHistory();
     } catch (err) {
-      setAnalysisError(String(err));
-      setAnalysisStatus('error');
+      if ((err as Error).name === 'AbortError') {
+        setAnalysisStatus('idle');
+      } else {
+        setAnalysisError(String(err));
+        setAnalysisStatus('error');
+      }
+    } finally {
+      abortRef.current = null;
     }
   }, [selectedContext, refreshHistory]);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   /** Restore a history entry — populate all panels without resetting them */
   const handleRestore = useCallback((entry: HistoryEntry) => {
@@ -128,6 +143,7 @@ function App() {
           <AnalysisStatusPanel
             status={analysisStatus}
             onAnalyze={handleAnalyze}
+            onCancel={handleCancel}
             hasContext={!!selectedContext}
           />
           <AnalysisResultPanel result={analysisResult} error={analysisError} />

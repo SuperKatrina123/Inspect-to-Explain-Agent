@@ -518,10 +518,19 @@ function boot() {
 
   // ── Analyze ──────────────────────────────────────────────────────────────────
 
+  let analyzeController: AbortController | null = null;
+
   elAbtn.addEventListener('click', async () => {
+    // If already analyzing, cancel the request
+    if (analyzeController) {
+      analyzeController.abort();
+      analyzeController = null;
+      return;
+    }
+
     if (!currentContext) return;
-    elAbtn.disabled = true;
-    elAbtn.textContent = '⏳ Analyzing…';
+    analyzeController = new AbortController();
+    elAbtn.textContent = '✕ Cancel';
     elRsec.style.display = '';
     elRbody.innerHTML = '<div class="__ia-st">Sending to server…</div>';
 
@@ -530,14 +539,19 @@ function boot() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(currentContext),
+        signal: analyzeController.signal,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { result } = (await res.json()) as { result: AnalysisResult };
       renderResult(result);
     } catch (err: any) {
-      elRbody.innerHTML = `<div class="__ia-err">Error: ${esc(err.message)}</div>`;
+      if (err.name === 'AbortError') {
+        elRbody.innerHTML = '<div class="__ia-st">Cancelled</div>';
+      } else {
+        elRbody.innerHTML = `<div class="__ia-err">Error: ${esc(err.message)}</div>`;
+      }
     } finally {
-      elAbtn.disabled = false;
+      analyzeController = null;
       elAbtn.textContent = '🔍 Analyze Element';
     }
   });

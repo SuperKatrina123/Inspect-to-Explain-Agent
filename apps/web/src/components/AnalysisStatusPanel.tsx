@@ -3,6 +3,7 @@ import { AnalysisStatus } from '../types';
 interface Props {
   status: AnalysisStatus;
   onAnalyze: () => void;
+  onCancel: () => void;
   hasContext: boolean;
 }
 
@@ -13,7 +14,7 @@ const STATUS_META: Record<AnalysisStatus, { icon: string; label: string; cls: st
   error:   { icon: '✗', label: 'Analysis failed',    cls: 'status-error'    },
 };
 
-export function AnalysisStatusPanel({ status, onAnalyze, hasContext }: Props) {
+export function AnalysisStatusPanel({ status, onAnalyze, onCancel, hasContext }: Props) {
   const meta = STATUS_META[status];
   return (
     <div className="panel">
@@ -22,13 +23,19 @@ export function AnalysisStatusPanel({ status, onAnalyze, hasContext }: Props) {
         <span className={status === 'loading' ? 'spin' : ''}>{meta.icon}</span>
         <span>{meta.label}</span>
       </div>
-      <button
-        className="analyze-btn"
-        onClick={onAnalyze}
-        disabled={!hasContext || status === 'loading'}
-      >
-        {status === 'loading' ? 'Analyzing…' : '🔍 Analyze Element'}
-      </button>
+      {status === 'loading' ? (
+        <button className="analyze-btn cancel-btn" onClick={onCancel}>
+          ✕ Cancel
+        </button>
+      ) : (
+        <button
+          className="analyze-btn"
+          onClick={onAnalyze}
+          disabled={!hasContext}
+        >
+          🔍 Analyze Element
+        </button>
+      )}
       {!hasContext && <p className="hint">Select an element first</p>}
     </div>
   );
