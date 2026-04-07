@@ -52,10 +52,9 @@ interface SearchTokens {
  *   3. PascalCase guesses from ancestor class root tokens
  */
 function extractSearchTokens(ctx: ElementContext): SearchTokens {
-  // 1. Fiber components
+  // 1. Fiber components (filtering of framework noise is done by filterFiberStack)
   const fiberComponents = (ctx.reactComponentStack ?? []).filter(
-    // Skip internal React names and very generic ones
-    (n) => n !== 'App' && n !== 'StrictMode' && n !== 'Router' && n.length > 2,
+    (n) => n.length > 2,
   );
 
   // 2. CSS class tokens
@@ -221,6 +220,56 @@ export function searchByContext(ctx: ElementContext, projectRoot: string): CodeR
 }
 
 // ── SOA endpoint scanner ──────────────────────────────────────────────────────
+
+/**
+ * Filter a Fiber component stack to only names that have a definition in the
+ * local codebase.  Components from node_modules (React internals, third-party
+ * libraries like react-router, redux, etc.) will be dropped automatically
+ * because collectFiles() skips node_modules.
+ *
+ * This replaces a hard-coded blacklist — any component whose definition lives
+ * in the project source is kept; everything else is noise.
+ */
+export function filterFiberStack(stack: string[], projectRoot: string): string[] {
+  if (!stack.length) return stack;
+
+  const files = collectFiles(projectRoot);
+  const definedNames = new Set<string>();
+
+  // Component definition patterns
+  const makePatterns = (name: string) => [
+    `function ${name}`,
+    `const ${name}`,
+    `class ${name}`,
+    `export function ${name}`,
+    `export const ${name}`,
+    `export default function ${name}`,
+  ];
+
+  for (const filePath of files) {
+    let content: string;
+    try { content = readFileSync(filePath, 'utf-8'); } catch { continue; }
+
+    for (const name of stack) {
+      if (definedNames.has(name)) continue;
+      if (makePatterns(name).some(p => content.includes(p))) {
+        definedNames.add(name);
+      }
+    }
+
+    // Early exit if all names are found
+    if (definedNames.size === stack.length) break;
+  }
+
+  const filtered = stack.filter(n => definedNames.has(n));
+  const dropped = stack.filter(n => !definedNames.has(n));
+  if (dropped.length > 0) {
+    console.log(`[fiber-filter] Dropped ${dropped.length} non-local component(s): ${dropped.join(', ')}`);
+  }
+  return filtered;
+}
+
+// ── SOA endpoint scanner (continued) ──────────────────────────────────────────
 
 /**
  * Matches SOA/BFF endpoint patterns commonly found in Ctrip-style monorepos:

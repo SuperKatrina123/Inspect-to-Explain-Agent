@@ -589,6 +589,19 @@ function boot() {
 
   // ── React Fiber component stack ───────────────────────────────────────────────
 
+  function unwrapHOC(name: string): string | null {
+    const m = name.match(/^(?:Memo|ForwardRef|WithRouter|Connect|Styled)\((.+)\)$/);
+    return m ? m[1] : null;
+  }
+
+  /** Pattern-based filter for framework/library components (not project-specific) */
+  function isFrameworkNoise(name: string): boolean {
+    if (name.startsWith('React')) return true;
+    if (/(?:Provider|Consumer|Adapter|Boundary|Overlay|Wrapper|Context)$/.test(name)) return true;
+    if (/^(?:Root|App|MyApp|Container|AppContainer)$/.test(name)) return true;
+    return false;
+  }
+
   function getReactComponentStack(el: Element): string[] {
     const key = Object.keys(el).find(
       k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')
@@ -599,9 +612,13 @@ function boot() {
     while (fiber) {
       const t = fiber.type;
       if (typeof t === 'function') {
-        const name: string | undefined = t.displayName || t.name;
-        if (name && name.length > 1 && name !== 'Anonymous' && !stack.includes(name))
-          stack.push(name);
+        let name: string | undefined = t.displayName || t.name;
+        if (name) {
+          name = unwrapHOC(name) ?? name;
+          const isMinified = name.length < 4 && name === name.toLowerCase();
+          if (name.length > 1 && name !== 'Anonymous' && !isMinified && !isFrameworkNoise(name) && !stack.includes(name))
+            stack.push(name);
+        }
       }
       fiber = fiber.return;
     }

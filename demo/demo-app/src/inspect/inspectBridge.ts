@@ -45,6 +45,19 @@ export interface InspectElementContext {
  *   - Anonymous components (() => <div>) are skipped gracefully.
  *   - Non-React pages return an empty array.
  */
+function unwrapHOC(name: string): string | null {
+  const m = name.match(/^(?:Memo|ForwardRef|WithRouter|Connect|Styled)\((.+)\)$/);
+  return m ? m[1] : null;
+}
+
+/** Pattern-based filter for framework/library components (not project-specific) */
+function isFrameworkNoise(name: string): boolean {
+  if (name.startsWith('React')) return true;
+  if (/(?:Provider|Consumer|Adapter|Boundary|Overlay|Wrapper|Context)$/.test(name)) return true;
+  if (/^(?:Root|App|MyApp|Container|AppContainer)$/.test(name)) return true;
+  return false;
+}
+
 function getReactComponentStack(el: Element): string[] {
   // Locate whichever internal fiber key React chose for this element
   const fiberKey = Object.keys(el).find(
@@ -58,10 +71,13 @@ function getReactComponentStack(el: Element): string[] {
   while (fiber) {
     const type = fiber.type;
     if (typeof type === 'function') {
-      const name: string | undefined = type.displayName || type.name;
-      // Skip very short names, internal React names, and duplicates
-      if (name && name.length > 1 && name !== 'Anonymous' && !stack.includes(name)) {
-        stack.push(name);
+      let name: string | undefined = type.displayName || type.name;
+      if (name) {
+        name = unwrapHOC(name) ?? name;
+        const isMinified = name.length < 4 && name === name.toLowerCase();
+        if (name.length > 1 && name !== 'Anonymous' && !isMinified && !isFrameworkNoise(name) && !stack.includes(name)) {
+          stack.push(name);
+        }
       }
     }
     fiber = fiber.return; // walk toward the root
