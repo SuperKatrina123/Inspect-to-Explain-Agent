@@ -283,6 +283,7 @@ SERVER_URL=http://localhost:3001 npm run build:bookmarklet
 - [x] **Bookmarklet** — 可注入任意页面，拖拽面板，网络请求录制，SSR 数据扫描，Server URL 运行时配置
 - [x] **SOA / BFF 接口静态检测** — 本地模式下自动 grep 候选组件的接口调用，作为数据来源的强信号
 - [x] **PII 脱敏** — server 侧递归脱敏响应体后再送 LLM
+- [x] **Fiber 组件栈净化** — 客户端模式匹配 + Server 端本地代码定义推断，双层过滤框架噪声和 minified 名称
 - [ ] **VSCode 联动** — 点击 Code Reference 中的文件路径，通过 `vscode://` 协议跳转到源文件对应行
 - [ ] **导出报告** — 将单次或多次分析结果导出为 JSON / Markdown，方便粘贴到 code review / issue
 - [ ] **构建时组件映射** — 构建阶段用 AST 解析生成 `componentName → file:line` 索引，作为生产包 minify 后 Fiber 名失效的精确备用方案
@@ -292,6 +293,16 @@ SERVER_URL=http://localhost:3001 npm run build:bookmarklet
 ---
 
 ## 📋 变更记录
+
+### v2.1 — Fiber 组件栈净化 + 高亮 class 修复（2026-04-07）
+
+**Bug 修复：**
+- 🐛 **高亮 class 泄漏**：hover 高亮 class（`__ia-hl` / `inspect-highlight`）在 click 采集 context 时未移除，导致 className 数据被污染。现在 `extractContext` 前先清理高亮 class
+
+**新增功能：**
+- 🧹 **Fiber 组件栈客户端过滤**：HOC 解包（`Memo(X)` → `X`）、minified 名称过滤（`eu`/`ey` 等）、模式匹配过滤框架噪声（`React*`、`*Provider`、`*Boundary`、`Root`/`App`/`Container` 等）
+- 🔍 **Server 端 Fiber 栈自动推断**：`filterFiberStack()` 扫描 `CODE_SEARCH_ROOT` 源文件，只保留有定义的业务组件名，自动排除第三方/框架组件。在 analyze 路由入口处执行，所有下游（代码检索、LLM prompt、历史记录）均使用干净的栈
+- ✕ **分析请求可取消**：Bookmarklet 和 Web App 的 Analyze 按钮在请求中变为 Cancel 按钮，点击即通过 AbortController 中止请求，避免误点等待
 
 ### v2 — Bookmarklet + 网络上下文 + SOA 检测（2026-04-06）
 

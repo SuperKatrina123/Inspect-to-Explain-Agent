@@ -98,18 +98,20 @@
 
 ```
 用户 click 某个元素
-  └─► extractContext(el)
-        ├─ selectedElement: tag / text / className / id / CSS selector / XPath
-        ├─ ancestors: 向上 5 层父节点
-        ├─ siblings: 同级节点文本
-        ├─ nearbyTexts: 父容器内可见文本
-        ├─ reactComponentStack: getReactComponentStack(el)
-        │     └─ 读取 el.__reactFiber$xxx → 沿 fiber.return 遍历
-        │          → ["OrderSummary", "App"]
-        └─ networkContext (Bookmarklet 模式):
-              ├─ filter: "/restapi/soa2/"
-              ├─ requests: 录制的接口响应（trimBody 裁剪）
-              └─ ssrData: scanSsrData() 扫描结果
+  └─► 移除高亮 class（__ia-hl / inspect-highlight）
+      └─► extractContext(el)
+            ├─ selectedElement: tag / text / className / id / CSS selector / XPath
+            ├─ ancestors: 向上 5 层父节点
+            ├─ siblings: 同级节点文本
+            ├─ nearbyTexts: 父容器内可见文本
+            ├─ reactComponentStack: getReactComponentStack(el)
+            │     └─ 读取 el.__reactFiber$xxx → 沿 fiber.return 遍历
+            │          → unwrapHOC → 过滤 minified / 框架噪声
+            │          → ["ReservationInfo", "BookingPage"]
+            └─ networkContext (Bookmarklet 模式):
+                  ├─ filter: "/restapi/soa2/"
+                  ├─ requests: 录制的接口响应（trimBody 裁剪）
+                  └─ ssrData: scanSsrData() 扫描结果
 ```
 
 ### 流程 4 — 分析请求 → 结构化结果
@@ -119,6 +121,9 @@
   └─► POST /api/analyze-element  body: ElementContext
 
         routes/analyze.ts
+          │
+          ├─► codeSearch.filterFiberStack(stack)   ← 入口处立即过滤
+          │     只保留 CODE_SEARCH_ROOT 中有定义的组件名
           │
           ├─► codeSearch.searchByContext(ctx)        ← 有 CODE_SEARCH_ROOT 时
           │     三层降级：Fiber组件名 > className > PascalCase猜测
@@ -172,7 +177,7 @@
 | `apps/web/src/App.tsx` | 主状态编排：inspect / 分析 / 历史 / 对比 |
 | `apps/web/src/components/CompareModal.tsx` | 并排 Diff 对比，差异高亮逻辑 |
 | `apps/server/src/routes/analyze.ts` | 分析接口入口 |
-| `apps/server/src/services/codeSearch.ts` | 三层降级代码检索 + SOA endpoint grep |
+| `apps/server/src/services/codeSearch.ts` | 三层降级代码检索 + SOA endpoint grep + Fiber 栈过滤 |
 | `apps/server/src/services/llmRetrieval.ts` | LLM 调用编排，解析失败自动 fallback |
 | `apps/server/src/services/promptBuilder.ts` | 系统提示词 + 用户消息构建（含网络/SOA区块） |
 | `apps/server/src/services/dataMasker.ts` | 递归 PII 脱敏（手机/邮箱/身份证/银行卡/JWT） |
