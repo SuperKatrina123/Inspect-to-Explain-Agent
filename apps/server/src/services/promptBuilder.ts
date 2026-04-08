@@ -1,5 +1,6 @@
 import { ElementContext, CodeReference, SoaReference, NetworkContext } from '../types';
 import { maskSensitiveData } from './dataMasker';
+import { rankNetworkCandidates, formatCandidatesForPrompt } from './networkRanker';
 
 /**
  * Builds the system prompt that instructs the LLM on the analysis task,
@@ -41,8 +42,8 @@ Rules:
 - Base reasoning solely on the provided context; do not invent file paths.
 - When SOA references are provided, they are STRONG evidence that the element's data comes from that service. Set sourceType to "api_response" unless there is clear counter-evidence.
 - If the SOA method name semantically matches the element content (e.g. "fetchHotelInfoList" → hotel price/name), confidence should be ≥ 0.85.
-- When network data is provided, it is the strongest signal for sourceType. Prioritize it.
-- If the element's text appears in a network response body, sourceType is almost certainly "api_response" or "derived_field".
+- When network data is provided, it has been pre-ranked by relevance. The top candidates are the most likely data sources.
+- If the element's text appears in a network response body (shown as "Element text found at"), sourceType is almost certainly "api_response" or "derived_field".
 - If SSR hydration data is provided, treat it as equivalent to an API response.
 - If no network match exists and the text looks like a static label, lean toward "frontend_static".`;
 }
@@ -126,8 +127,9 @@ export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]
     fiberSection = `\n## React Component Hints (secondary evidence — may include framework internals)\n\n${lines.join('\n')}\n\nThese come from the React Fiber tree. Use them as supporting evidence alongside DOM structure, className, and network context.\n`;
   }
 
-  // Network section — strongest signal for sourceType
-  const networkSection = networkContext ? buildNetworkSection(networkContext) : '';
+  // Network section — pre-ranked candidates instead of raw dump
+  const ranked = rankNetworkCandidates(networkContext, ctx);
+  const networkSection = formatCandidatesForPrompt(ranked);
 
   return `## Selected Element
 

@@ -121,7 +121,7 @@ function boot() {
   // Capped at MAX_RECORDS; oldest entry dropped when full.
 
   const MAX_RECORDS = 30;
-  let networkFilter = '/api/';
+  let networkFilter = '/restapi/soa2/';
   let networkLog: RecordedRequest[] = [];
 
   const _origFetch = window.fetch.bind(window);
@@ -152,8 +152,8 @@ function boot() {
   }
 
   function pushRecord(method: string, url: string, body: any) {
-    if (!inspectActive) return;              // only record while inspect is ON
-    if (!pathMatches(url)) return;           // only record matching paths
+    // 始终录制匹配路径的请求（不再等 inspectActive），确保 SSR 页面加载后的请求也能捕获 body
+    if (!pathMatches(url)) return;
     const endpoint = (() => { try { return new URL(url, window.location.href).pathname; } catch { return url; } })();
     // Truncate large response bodies to keep payload manageable
     const trimmed = trimBody(body, 0, 30);
@@ -207,7 +207,7 @@ function boot() {
   // Called once at click time so we always get the latest state.
 
   const SSR_KEYS = [
-    '__NEXT_DATA__', '__NUXT__', '__INITIAL_STATE__', '__APP_STATE__',
+    '__NEXT_DATA__', '__next_f', '__NUXT__', '__INITIAL_STATE__', '__APP_STATE__',
     '__REDUX_STATE__', '__PRELOADED_STATE__', '__SERVER_DATA__',
   ];
 
@@ -231,6 +231,33 @@ function boot() {
       } catch { /* skip malformed */ }
     });
 
+    return results;
+  }
+
+  // ── Performance API 历史请求扫描 ───────────────────────────────────────────
+  // 从 Performance Timeline 提取页面加载以来的所有 fetch/XHR 请求。
+  // 无 response body，但有完整 URL，足够 LLM 推断数据来源。
+
+  function scanPerformanceRequests(filter: string): RecordedRequest[] {
+    if (typeof performance === 'undefined' || !performance.getEntriesByType) return [];
+    const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+    const results: RecordedRequest[] = [];
+    const seen = new Set<string>();
+    for (const entry of entries) {
+      if (entry.initiatorType !== 'fetch' && entry.initiatorType !== 'xmlhttprequest') continue;
+      try {
+        const pathname = new URL(entry.name, window.location.href).pathname;
+        if (!pathname.includes(filter)) continue;
+        if (seen.has(pathname)) continue;
+        seen.add(pathname);
+        results.push({
+          method: 'GET',  // Performance API 不暴露 method，默认 GET
+          endpoint: pathname,
+          body: null,
+          timestamp: Math.round(entry.startTime),
+        });
+      } catch { /* skip */ }
+    }
     return results;
   }
 
@@ -385,7 +412,7 @@ function boot() {
         </div>
         <div class="__ia-filter-row">
           <span class="__ia-filter-lbl">record path:</span>
-          <input class="__ia-filter-input" id="__ia-filter" value="/api/" title="Only record XHR/fetch requests whose path contains this string" />
+          <input class="__ia-filter-input" id="__ia-filter" value="/restapi/soa2/" title="Only record XHR/fetch requests whose path contains this string" />
         </div>
         <div style="font-size:10px;color:#6c7086;margin-top:4px" id="__ia-net-stat">Recording starts when Inspect is ON</div>
         <div class="__ia-filter-row">
@@ -460,7 +487,7 @@ function boot() {
 
   function activate() {
     inspectActive = true;
-    networkLog = [];   // fresh log every time inspect is turned ON
+    // 不再清空 networkLog，保留注入后已录到的请求
     document.body.classList.add('__ia-mode');
     document.addEventListener('mouseover', onOver);
     document.addEventListener('mouseout', onOut);
@@ -596,11 +623,18 @@ function boot() {
       ? `<div style="margin-top:4px"><span class="__ia-chip">${esc(bestHint)}</span></div>`
       : '';
 
+    // 源码位置（仅 dev 模式可用）
+    const ds = ri?.debugSource;
+    const srcHtml = ds
+      ? `<div class="__ia-code-file" style="margin-top:4px">${esc(ds.fileName)}:${ds.lineNumber}</div>`
+      : '';
+
     elCtx.innerHTML = `
       <div class="__ia-el-summary">
         <span class="__ia-el-tag">&lt;${esc(el.tag)}&gt;</span>${idPart}${textPart}
       </div>
       ${hintHtml}
+      ${srcHtml}
     `;
   }
 
@@ -894,11 +928,38 @@ function boot() {
       reactInspection: inspection.react,
       // 向后兼容：server 端仍依赖 reactComponentStack 做 code search
       reactComponentStack: inspection.react.businessStack,
-      networkContext: {
-        filter: networkFilter,
-        requests: [...networkLog],   // snapshot at click time
-        ssrData: scanSsrData(),
-      },
+      networkContext: (() => {
+        const ssrData = scanSsrData();
+        // 三个来源合并，去重：
+        // 1. networkLog — Enable 后浏览器端 fetch/XHR 实时录制（有 body）
+        // 2. Performance API — 页面加载以来的所有 fetch/XHR 历史（无 body）
+        // 3. SSR fetchPerf — 服务端渲染时的 SOA 调用（无 body）
+        const perfRequests = scanPerformanceRequests(networkFilter);
+        const ssrRequests: RecordedRequest[] = [];
+        for (const entry of ssrData) {
+          const perfs: any[] = entry.data?.fetchPerf ?? [];
+          for (const p of perfs) {
+            if (p.url && p.isSOA) {
+              try {
+                const endpoint = new URL(p.url, window.location.href).pathname;
+                ssrRequests.push({ method: 'POST', endpoint, body: null, timestamp: 0 });
+              } catch { /* skip */ }
+            }
+          }
+        }
+        // 去重：networkLog 优先（有 body），再补 perf 和 ssr
+        const seen = new Set(networkLog.map(r => r.endpoint));
+        const extra = [...perfRequests, ...ssrRequests].filter(r => {
+          if (seen.has(r.endpoint)) return false;
+          seen.add(r.endpoint);
+          return true;
+        });
+        return {
+          filter: networkFilter,
+          requests: [...networkLog, ...extra],
+          ssrData,
+        };
+      })(),
     };
   }
 

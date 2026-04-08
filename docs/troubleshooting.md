@@ -127,3 +127,63 @@ Bookmarklet 面板的 components 列表出现 `MyApp`、`PathnameContextProvider
   - Minified 过滤：全小写且 < 4 字符的名字丢弃
   - 模式匹配：以 `React` 开头 / 以 `Provider|Consumer|Adapter|Boundary|Overlay|Wrapper|Context` 结尾 / 精确匹配 `Root|App|MyApp|Container|AppContainer` → 过滤
 - **Server 端**（`filterFiberStack`）：扫描 `CODE_SEARCH_ROOT` 下的源文件，只保留能找到定义（`function X` / `const X` / `class X`）的组件名，自动排除所有第三方和框架组件
+
+---
+
+## 2026-04-08
+
+### 8. Fiber 组件栈漏掉 React.memo / forwardRef 包裹的组件
+
+**现象**
+面板 components 列表中看不到 `HotelInfoModule`、`HotelNameWithTags` 等业务组件。
+
+**根本原因**
+`React.memo()` 和 `React.forwardRef()` 返回 object 类型（`{ $$typeof, type/render }`），旧代码 `typeof fiber.type === 'function'` 判断会跳过。
+
+**解决方案**
+重写为 `reactInspector.ts` 模块，使用 `fiber.tag` 数字常量分类，对 object 类型做三层穿透。
+
+---
+
+### 9. isFrameworkNoise 后缀匹配误杀业务组件
+
+**现象**
+`StaticInfoWrapper` 被过滤掉（名字以 `Wrapper` 结尾）。
+
+**根本原因**
+旧正则 `/(?:Wrapper|Provider|...)$/` 纯后缀匹配，`StaticInfoWrapper` 这种多段式业务命名被误判。
+
+**解决方案**
+改用精确模式匹配列表（`FRAMEWORK_NOISE_PATTERNS`），不做后缀通配。支持用户自定义 blacklist。
+
+---
+
+### 10. SSR 页面 networkContext.requests 全部 body 为 null
+
+**现象**
+所有 API 请求的 `body` 都是 `null`，LLM 无法做 text match。
+
+**根本原因**
+SSR 页面初始 API 请求在服务端完成，浏览器端不发 fetch/XHR。bookmarklet 的 fetch patch 只能录到注入后的新请求。
+
+**解决方案**
+- `pushRecord` 去掉 `inspectActive` 守卫，注入即录制
+- 新增 `scanPerformanceRequests()` + SSR `fetchPerf` 提取
+- 三源合并去重
+- 新增 `networkRanker.ts` 在无 body 时靠 SOA 方法名语义打分
+
+**已知限制**
+bookmarklet 刷新页面后消失。根本解决需 Tampermonkey 脚本或 Chrome Extension。
+
+---
+
+### 11. .env 文件中值加分号导致模型不存在
+
+**现象**
+`LLM_MODEL='claude-opus-4-6';` 报模型不存在。
+
+**根本原因**
+`.env` 不是 JavaScript，分号会作为值的一部分，实际为 `claude-opus-4-6;`。
+
+**解决方案**
+不加引号不加分号：`LLM_MODEL=claude-opus-4-6`

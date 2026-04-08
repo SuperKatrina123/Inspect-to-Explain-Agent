@@ -6,6 +6,12 @@ import { ElementContext, CodeReference, SoaReference } from '../types';
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.vite', 'coverage']);
 const SOURCE_EXTS = new Set(['.tsx', '.ts', '.jsx', '.js']);
+const H5_FILE_PATTERN = /\.h5\.(?:tsx?|jsx?)$/i;
+
+/** Taro multi-platform convention: prioritize H5 implementation files */
+function isH5SourceFile(pathLike: string): boolean {
+  return H5_FILE_PATTERN.test(pathLike);
+}
 
 /** Recursively collect all source files under a directory */
 function collectFiles(dir: string): string[] {
@@ -24,7 +30,13 @@ function collectFiles(dir: string): string[] {
       }
     } catch { /* skip unreadable */ }
   }
-  return results;
+  // Prefer platform-targeted H5 files first (e.g. *.h5.tsx) in multi-end projects.
+  return results.sort((a, b) => {
+    const pa = isH5SourceFile(a) ? 0 : 1;
+    const pb = isH5SourceFile(b) ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return a.localeCompare(b);
+  });
 }
 
 // ── Token extraction ──────────────────────────────────────────────────────────
@@ -144,6 +156,7 @@ export function searchByContext(ctx: ElementContext, projectRoot: string): CodeR
     const relPath = relative(projectRoot, filePath);
     const fileBase = basename(filePath, extname(filePath));
     const componentName = fileBase;
+    const platformBonus = isH5SourceFile(relPath) ? 2 : 0;
 
     for (let i = 0; i < lines.length; i++) {
       const rawLine = lines[i];
@@ -158,7 +171,7 @@ export function searchByContext(ctx: ElementContext, projectRoot: string): CodeR
             file: relPath,
             line: i + 1,
             snippet: rawLine.trim().slice(0, 150),
-            score: s + 5, // Fiber results get a base boost
+            score: s + 5 + platformBonus, // Fiber results get a base boost
             componentName: name,
           });
           seenLines.add(dedupeKey);
@@ -175,7 +188,7 @@ export function searchByContext(ctx: ElementContext, projectRoot: string): CodeR
             rawMatches.push({
               file: relPath, line: i + 1,
               snippet: rawLine.trim().slice(0, 150),
-              score: s, componentName,
+              score: s + platformBonus, componentName,
             });
             seenLines.add(dedupeKey);
             break;
@@ -190,7 +203,7 @@ export function searchByContext(ctx: ElementContext, projectRoot: string): CodeR
           rawMatches.push({
             file: relPath, line: i + 1,
             snippet: rawLine.trim().slice(0, 150),
-            score: scoreLine(rawLine, name) + 1,
+            score: scoreLine(rawLine, name) + 1 + platformBonus,
             componentName,
           });
           seenLines.add(dedupeKey);

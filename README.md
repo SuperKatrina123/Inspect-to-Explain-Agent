@@ -11,16 +11,17 @@
 ## ✨ 功能特性
 
 - 🖱️ **Inspect Mode** — 开关式 inspect 模式，hover 高亮元素，click 选中并采集上下文
-- 📌 **Element Context 采集** — 自动提取 tag、text、className、id、CSS selector、XPath、祖先链、兄弟节点、周边文本、**React Fiber 组件栈**
+- 📌 **Element Context 采集** — 自动提取 tag、text、className、id、CSS selector、XPath、祖先链、兄弟节点、周边文本、**React 组件栈**、**源码位置**（dev 模式）
 - ⚙️ **结构化分析** — 后端根据 context 推断模块归属、候选组件、字段来源类型、置信度
 - 🤖 **真实 LLM 分析** — 接入 OpenAI 兼容 API，LLM 结合代码检索上下文生成解释
 - 📂 **本地代码检索** — 以 React Fiber 组件名为主、className token 为辅，三层降级策略定位源文件
 - 🔌 **SOA 接口静态检测** — 本地模式下自动 grep 候选组件文件中的 SOA endpoint 调用，作为 `api_response` 的强信号
+- 📡 **Network Candidate Ranker** — 程序侧预排序网络请求，按 SOA 方法名语义、text match、路径关键词打分，只把 top 候选喂给 LLM
 - 🕑 **历史记录** — 每次 inspect 自动保存，可展开详情、一键回溯、选两条对比
 - ⚖️ **并排对比 + Diff 高亮** — 对比两次 inspect，差异字段橙色边框高亮，置信度 Δ 徽章
 - 📊 **可视化结果面板** — 三栏面板展示选中信息、分析状态与分析结果
 - 🧩 **Demo 页面** — 内置包含多种字段来源类型（静态文案 / API数据 / 配置驱动 / 派生字段）的演示页
-- 🔖 **Bookmarklet** — 可注入任意网页的悬浮面板，支持拖拽移动、网络请求录制、SSR 数据扫描、Server URL 面板内配置
+- 🔖 **Bookmarklet** — 可注入任意网页的悬浮面板，支持拖拽移动、网络请求录制、SSR 数据扫描、自定义组件黑名单、代码搜索路径配置
 
 ---
 
@@ -65,13 +66,15 @@ apps/server/src/
 └── services/
     ├── mockRetrieval.ts           mock 推断逻辑（fallback）
     ├── llmRetrieval.ts            LLM 调用编排（代码检索 → SOA 扫描 → 构建 prompt → 调用 → 解析）
-    ├── codeSearch.ts              三层代码检索 + SOA endpoint grep
-    ├── promptBuilder.ts           系统提示词 + 用户消息构建（含网络上下文/SOA区块）
+    ├── codeSearch.ts              三层代码检索 + SOA endpoint grep + H5多端优先
+    ├── promptBuilder.ts           系统提示词 + 用户消息构建（含 ranked network / SOA 区块）
+    ├── networkRanker.ts           网络请求摘要 + 相关性打分 + 候选排序
     ├── dataMasker.ts              递归 PII 脱敏（手机/邮箱/身份证/银行卡/JWT等）
     └── historyStore.ts            内存 store + .history.json 持久化
 
 apps/bookmarklet/src/
-└── index.ts                       自包含 IIFE：浮动面板 + Fiber读取 + 网络录制 + SSR扫描
+├── index.ts                       自包含 IIFE：浮动面板 + 网络录制 + SSR扫描 + Settings
+└── reactInspector.ts              React Fiber 反查模块：组件栈 + props 摘要 + 源码定位
 
 docs/
 ├── architecture.md                系统架构图 + 数据流
@@ -175,11 +178,11 @@ SERVER_URL=http://localhost:3001 npm run build:bookmarklet
 
 1. 打开任意网页，点击书签 → 右上角浮现悬浮面板
 2. 在面板顶部 **server:** 输入框填入你的分析 server 地址（自动保存到 localStorage）
-3. 设置 **record path:** 过滤要录制的接口路径（如 `/restapi/soa2/`）
-4. 点击 **Enable** 开启 Inspect Mode，开始录制匹配的网络请求
-5. 点击页面元素 → 面板展示 context（含 React 组件栈、已录制请求数、SSR 数据）
-6. 点击 **🔍 Analyze Element** 发送给 server 分析
-7. 拖拽面板 **标题栏** 可移动位置（自动保存）；再次点击书签可切换 Inspect ON/OFF；关闭按钮（✕）完全移除面板
+3. 展开 **Settings**，设置 **record path:** 过滤路径（如 `/restapi/soa2/`）、**blacklist:** 自定义组件黑名单、**code root:** 代码搜索路径
+4. 点击 **Enable** 开启 Inspect Mode
+5. 点击页面元素 → 面板展示 context（含最近业务组件、源码位置）
+6. 点击 **Analyze** 发送给 server 分析
+7. 拖拽面板 **标题栏** 可移动位置（自动保存）；再次点击书签可切换 Inspect ON/OFF；关闭按钮完全移除面板
 
 > **本地模式**：启动 `apps/server` 并设置 `CODE_SEARCH_ROOT`，server 会自动静态扫描 SOA 调用，无需录制网络请求即可推断数据来源。
 
@@ -203,8 +206,15 @@ SERVER_URL=http://localhost:3001 npm run build:bookmarklet
   ancestors: Array<{ tag: string; className: string; id: string }>;
   siblings:  Array<{ tag: string; text: string; className: string }>;
   nearbyTexts: string[];
-  reactComponentStack: string[];  // React Fiber 组件名，nearest → root
-  networkContext?: {               // Bookmarklet 录制的网络上下文（可选）
+  reactComponentStack?: string[];  // 业务组件栈（向后兼容）
+  reactInspection?: {              // 结构化 React 检查结果（新版）
+    nearestComponent: string | null;
+    businessStack: string[];
+    propsSummary: Record<string, unknown> | null;
+    debugSource: { fileName: string; lineNumber: number } | null;
+    fiberDepth: number;
+  };
+  networkContext?: {               // 网络上下文（Bookmarklet 录制，可选）
     filter: string;               // 路径 filter，如 "/restapi/soa2/"
     requests: Array<{ method: string; endpoint: string; body: any; timestamp: number }>;
     ssrData: Array<{ key: string; data: any }>;

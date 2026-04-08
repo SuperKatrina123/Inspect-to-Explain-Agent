@@ -50,6 +50,13 @@ export interface ComponentEntry {
   depth: number;
 }
 
+/** React _debugSource 信息（仅 dev 模式可用） */
+export interface DebugSource {
+  fileName: string;
+  lineNumber: number;
+  columnNumber?: number;
+}
+
 export interface ReactInspection {
   /** 最近的 React 组件（含框架组件） */
   nearestComponent: string | null;
@@ -57,6 +64,8 @@ export interface ReactInspection {
   businessStack: string[];
   /** 最近业务组件的 props 摘要（不含 children / event handler） */
   propsSummary: Record<string, unknown> | null;
+  /** 最近组件的源码位置（仅 dev 模式，来自 fiber._debugSource） */
+  debugSource: DebugSource | null;
   /** Fiber 遍历深度 */
   fiberDepth: number;
 }
@@ -347,6 +356,7 @@ export function extractReactInspectionContext(
         nearestComponent: null,
         businessStack: [],
         propsSummary: null,
+        debugSource: null,
         fiberDepth: 0,
       },
     };
@@ -356,20 +366,40 @@ export function extractReactInspectionContext(
   const businessStack = cleanBusinessStack(rawStack, blacklist);
   const nearestComponent = rawStack.length > 0 ? rawStack[0].name : null;
 
-  // 提取最近业务组件的 props
+  // 提取最近业务组件的 props 和 _debugSource
   let propsSummary: Record<string, unknown> | null = null;
-  if (businessStack.length > 0) {
-    // 找到第一个业务组件对应的 fiber，提取其 memoizedProps
-    const targetName = businessStack[0];
+  let debugSource: DebugSource | null = null;
+
+  // 先从当前 fiber 向上找 _debugSource（最近的源码位置）
+  {
     let f = fiber;
     let d = 0;
     while (f && d < MAX_FIBER_DEPTH) {
       d++;
-      const n = getDisplayNameFromFiber(f);
-      if (n && unwrapHOCName(n) === targetName && f.memoizedProps) {
-        propsSummary = summarizeProps(f.memoizedProps);
-        break;
+      if (f._debugSource && !debugSource) {
+        debugSource = {
+          fileName: f._debugSource.fileName,
+          lineNumber: f._debugSource.lineNumber,
+          columnNumber: f._debugSource.columnNumber,
+        };
       }
+      // 同时找业务组件的 props
+      if (businessStack.length > 0 && !propsSummary) {
+        const n = getDisplayNameFromFiber(f);
+        if (n && unwrapHOCName(n) === businessStack[0] && f.memoizedProps) {
+          propsSummary = summarizeProps(f.memoizedProps);
+          // 如果这个组件有 _debugSource 且比之前找到的更精确，用这个
+          if (f._debugSource) {
+            debugSource = {
+              fileName: f._debugSource.fileName,
+              lineNumber: f._debugSource.lineNumber,
+              columnNumber: f._debugSource.columnNumber,
+            };
+          }
+        }
+      }
+      // 两个都找到了就提前退出
+      if (debugSource && propsSummary) break;
       f = f.return;
     }
   }
@@ -385,6 +415,7 @@ export function extractReactInspectionContext(
       nearestComponent,
       businessStack,
       propsSummary,
+      debugSource,
       fiberDepth: rawStack.length > 0 ? rawStack[rawStack.length - 1].depth : 0,
     },
   };
