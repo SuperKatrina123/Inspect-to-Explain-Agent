@@ -94,6 +94,11 @@ function boot() {
   const LS_KEY = '__ia_server';
   let SERVER: string = localStorage.getItem(LS_KEY) || __SERVER_URL__;
 
+  // Custom component blacklist (comma-separated, persisted to localStorage)
+  const LS_BLACKLIST = '__ia_blacklist';
+  let componentBlacklist: string[] = (localStorage.getItem(LS_BLACKLIST) || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
   let inspectActive = false;
   let lastHighlighted: Element | null = null;
   let currentContext: ElementContext | null = null;
@@ -298,6 +303,51 @@ function boot() {
     .__ia-net-ep   { font-size:10px; color:#89b4fa; }
     .__ia-net-count { font-size:10px; color:#a6e3a1; margin-left:4px; }
     .__ia-net-ssr  { font-size:10px; color:#f9e2af; margin-top:2px; }
+
+    /* Settings collapse */
+    .__ia-settings { margin-top:6px; }
+    .__ia-settings > summary {
+      font-size:10px; color:#6c7086; cursor:pointer; user-select:none;
+      list-style:none; display:flex; align-items:center; gap:4px;
+    }
+    .__ia-settings > summary::-webkit-details-marker { display:none; }
+    .__ia-settings > summary::before { content:'▸'; font-size:9px; transition:transform .15s; }
+    .__ia-settings[open] > summary::before { transform:rotate(90deg); }
+
+    /* Compact element summary */
+    .__ia-el-summary { font-size:11px; color:#cdd6f4; word-break:break-all; }
+    .__ia-el-tag { color:#89b4fa; font-weight:600; }
+    .__ia-el-id  { color:#f9e2af; }
+    .__ia-el-text { color:#a6adc8; }
+
+    /* Result layers */
+    .__ia-r-section { margin-top:8px; }
+    .__ia-r-section:first-child { margin-top:0; }
+    .__ia-r-divider { border:none; border-top:1px solid #313244; margin:8px 0; }
+    .__ia-ev-item {
+      font-size:11px; color:#bac2de; padding:3px 0 3px 8px;
+      border-left:2px solid #45475a; margin:4px 0; line-height:1.5;
+    }
+    .__ia-code-file { font-size:10px; color:#89b4fa; margin-top:4px; }
+    .__ia-code-snippet {
+      font-size:10px; color:#a6adc8; background:#181825;
+      padding:4px 6px; border-radius:3px; margin:2px 0 6px 0;
+      overflow-x:auto; white-space:pre; max-height:60px;
+    }
+    .__ia-conf-pct { font-size:10px; color:#a6adc8; float:right; }
+
+    /* More details collapse */
+    .__ia-r-details { margin-top:8px; }
+    .__ia-r-details > summary {
+      font-size:10px; color:#6c7086; cursor:pointer; user-select:none;
+      list-style:none; display:flex; align-items:center; gap:4px;
+    }
+    .__ia-r-details > summary::-webkit-details-marker { display:none; }
+    .__ia-r-details > summary::before { content:'▸'; font-size:9px; transition:transform .15s; }
+    .__ia-r-details[open] > summary::before { transform:rotate(90deg); }
+    .__ia-r-details-body { margin-top:6px; }
+    .__ia-detail-sec { margin-top:8px; }
+    .__ia-detail-sec:first-child { margin-top:0; }
   `;
   document.head.appendChild(styleEl);
 
@@ -307,23 +357,30 @@ function boot() {
   panel.id = '__ia-panel';
   panel.innerHTML = `
     <div class="__ia-hd">
-      <span>🔍 Inspect Agent</span>
-      <button class="__ia-x" id="__ia-x">✕</button>
+      <span>Inspect Agent</span>
+      <button class="__ia-x" id="__ia-x">&times;</button>
     </div>
     <div class="__ia-sec">
-      <div class="__ia-filter-row">
-        <span class="__ia-filter-lbl">server:</span>
-        <input class="__ia-filter-input" id="__ia-server" placeholder="http://localhost:3001" title="Analyze server URL (saved to localStorage)" />
-      </div>
-      <div class="__ia-row" style="margin-top:8px">
+      <div class="__ia-row">
         <span class="__ia-st" id="__ia-st">Inspect OFF</span>
         <button class="__ia-tbtn off" id="__ia-tb">Enable</button>
       </div>
-      <div class="__ia-filter-row">
-        <span class="__ia-filter-lbl">record path:</span>
-        <input class="__ia-filter-input" id="__ia-filter" value="/api/" title="Only record XHR/fetch requests whose path contains this string" />
-      </div>
-      <div style="font-size:10px;color:#6c7086;margin-top:4px" id="__ia-net-stat">Recording starts when Inspect is ON</div>
+      <details class="__ia-settings">
+        <summary>Settings</summary>
+        <div class="__ia-filter-row">
+          <span class="__ia-filter-lbl">server:</span>
+          <input class="__ia-filter-input" id="__ia-server" placeholder="http://localhost:3001" title="Analyze server URL (saved to localStorage)" />
+        </div>
+        <div class="__ia-filter-row">
+          <span class="__ia-filter-lbl">record path:</span>
+          <input class="__ia-filter-input" id="__ia-filter" value="/api/" title="Only record XHR/fetch requests whose path contains this string" />
+        </div>
+        <div style="font-size:10px;color:#6c7086;margin-top:4px" id="__ia-net-stat">Recording starts when Inspect is ON</div>
+        <div class="__ia-filter-row">
+          <span class="__ia-filter-lbl">blacklist:</span>
+          <input class="__ia-filter-input" id="__ia-blacklist" placeholder="_XView, FlatList, …" title="Comma-separated component names to hide (saved to localStorage)" />
+        </div>
+      </details>
     </div>
     <div class="__ia-sec">
       <div class="__ia-lbl">Selected Element</div>
@@ -331,10 +388,10 @@ function boot() {
       <div id="__ia-ctx" style="display:none"></div>
     </div>
     <div id="__ia-asec" style="display:none" class="__ia-sec">
-      <button class="__ia-btn" id="__ia-abtn">🔍 Analyze Element</button>
+      <button class="__ia-btn" id="__ia-abtn">Analyze</button>
     </div>
     <div id="__ia-rsec" style="display:none" class="__ia-sec">
-      <div class="__ia-lbl">Analysis Result</div>
+      <div class="__ia-lbl">Result</div>
       <div id="__ia-rbody"></div>
     </div>
   `;
@@ -352,12 +409,20 @@ function boot() {
   const elAbtn    = panel.querySelector('#__ia-abtn')    as HTMLButtonElement;
   const elRsec    = panel.querySelector('#__ia-rsec')    as HTMLElement;
   const elRbody   = panel.querySelector('#__ia-rbody')   as HTMLElement;
+  const elBlacklist = panel.querySelector('#__ia-blacklist') as HTMLInputElement;
 
   // Initialise server input from stored value
   elServer.value = SERVER;
   elServer.addEventListener('change', () => {
     SERVER = elServer.value.trim().replace(/\/$/, '');
     localStorage.setItem(LS_KEY, SERVER);
+  });
+
+  // Initialise blacklist input
+  elBlacklist.value = componentBlacklist.join(', ');
+  elBlacklist.addEventListener('change', () => {
+    componentBlacklist = elBlacklist.value.split(',').map(s => s.trim()).filter(Boolean);
+    localStorage.setItem(LS_BLACKLIST, componentBlacklist.join(','));
   });
 
   // Sync filter input → networkFilter state
@@ -379,7 +444,7 @@ function boot() {
     elSt.textContent = 'Inspect ON';
     elTb.textContent = 'Disable';
     elTb.className = '__ia-tbtn on';
-    elNetStat.textContent = `📡 Recording "${networkFilter}" requests…`;
+    elNetStat.textContent = `Recording "${networkFilter}" requests…`;
   }
 
   function deactivate() {
@@ -473,6 +538,7 @@ function boot() {
     t.classList.remove('__ia-hl');
   }
 
+  // 捕获页面元素，获取该元素信息
   function onClickEl(e: MouseEvent) {
     const t = e.target as Element;
     if (panel.contains(t)) return;
@@ -480,39 +546,34 @@ function boot() {
     e.stopPropagation();
     t.classList.remove('__ia-hl');
     if (lastHighlighted === t) lastHighlighted = null;
+    // 
     currentContext = extractContext(t);
     renderContext(currentContext);
     elRsec.style.display = 'none';
     elAsec.style.display = '';
   }
 
-  // ── Render context panel ─────────────────────────────────────────────────────
+  // ── Render context panel (compact) ────────────────────────────────────────────
 
   function renderContext(ctx: ElementContext) {
     const el = ctx.selectedElement;
-    const stack = ctx.reactComponentStack;
-    const net = ctx.networkContext;
+    const stack = ctx.reactComponentStack ?? [];
     elEmpty.style.display = 'none';
     elCtx.style.display = '';
+
+    const idPart = el.id ? `<span class="__ia-el-id">#${esc(el.id)}</span>` : '';
+    const textPart = el.text
+      ? ` <span class="__ia-el-text">"${esc(el.text.slice(0, 50))}${el.text.length > 50 ? '…' : ''}"</span>`
+      : '';
+    const maxChips = 4;
+    const chipHtml = stack.slice(0, maxChips).map(n => `<span class="__ia-chip">${esc(n)}</span>`).join('');
+    const overflowHtml = stack.length > maxChips ? `<span class="__ia-chip">+${stack.length - maxChips}</span>` : '';
+
     elCtx.innerHTML = `
-      <div class="__ia-kv"><span class="__ia-k">tag</span><span class="__ia-v">&lt;${esc(el.tag)}&gt;</span></div>
-      ${el.text ? `<div class="__ia-kv"><span class="__ia-k">text</span><span class="__ia-v">"${esc(el.text.slice(0, 80))}"</span></div>` : ''}
-      ${el.id ? `<div class="__ia-kv"><span class="__ia-k">id</span><span class="__ia-v">#${esc(el.id)}</span></div>` : ''}
-      ${el.className ? `<div class="__ia-kv"><span class="__ia-k">class</span><span class="__ia-v">${esc(el.className.slice(0, 60))}</span></div>` : ''}
-      ${stack.length ? `
-        <div class="__ia-kv" style="margin-top:6px">
-          <span class="__ia-k">components</span><br/>
-          ${stack.map(n => `<span class="__ia-chip">${esc(n)}</span>`).join('')}
-        </div>` : ''}
-      <div style="margin-top:8px">
-        <span class="__ia-k">📡 network</span>
-        <span class="__ia-net-count">${net.requests.length} request${net.requests.length !== 1 ? 's' : ''}</span>
-        ${net.requests.slice(0, 3).map(r =>
-          `<div class="__ia-net-row"><div class="__ia-net-ep">${esc(r.method)} ${esc(r.endpoint)}</div></div>`
-        ).join('')}
-        ${net.ssrData.length ? `
-          <div class="__ia-net-ssr">🗄 SSR: ${net.ssrData.map(s => esc(s.key)).join(', ')}</div>` : ''}
+      <div class="__ia-el-summary">
+        <span class="__ia-el-tag">&lt;${esc(el.tag)}&gt;</span>${idPart}${textPart}
       </div>
+      ${stack.length ? `<div style="margin-top:4px">${chipHtml}${overflowHtml}</div>` : ''}
     `;
   }
 
@@ -530,9 +591,9 @@ function boot() {
 
     if (!currentContext) return;
     analyzeController = new AbortController();
-    elAbtn.textContent = '✕ Cancel';
+    elAbtn.textContent = 'Cancel';
     elRsec.style.display = '';
-    elRbody.innerHTML = '<div class="__ia-st">Sending to server…</div>';
+    elRbody.innerHTML = '<div class="__ia-st">Analyzing…</div>';
 
     try {
       const res = await fetch(`${SERVER}/api/analyze-element`, {
@@ -552,47 +613,154 @@ function boot() {
       }
     } finally {
       analyzeController = null;
-      elAbtn.textContent = '🔍 Analyze Element';
+      elAbtn.textContent = 'Analyze';
     }
   });
 
-  // ── Render result panel ──────────────────────────────────────────────────────
+  // ── Render result sub-functions ───────────────────────────────────────────────
 
-  function renderResult(r: AnalysisResult) {
-    const pct = Math.round(r.confidence * 100);
+  function renderResultSummary(r: AnalysisResult): string {
+    const pct = Math.round((r.confidence ?? 0) * 100);
     const modeTag = r.analysisMode === 'llm'
       ? `<span class="__ia-llm">${esc(r.modelUsed ?? 'LLM')}</span>`
       : `<span class="__ia-llm">mock</span>`;
 
-    elRbody.innerHTML = `
-      <div class="__ia-mod">${esc(r.moduleName)}${modeTag}</div>
-      <div><span class="__ia-badge ${r.sourceType}">${r.sourceType}</span></div>
-      <div class="__ia-conf-wrap"><div class="__ia-conf-bar" style="width:${pct}%"></div></div>
-      <div class="__ia-kv"><span class="__ia-k">confidence</span><span class="__ia-v">${pct}%</span></div>
-      ${r.candidateComponents?.length ? `
-        <div class="__ia-kv" style="margin-top:4px">
-          <span class="__ia-k">components</span><br/>
-          ${r.candidateComponents.map(c => `<span class="__ia-chip">${esc(c)}</span>`).join('')}
-        </div>` : ''}
-      ${r.explanation ? `<div class="__ia-expl">${esc(r.explanation)}</div>` : ''}
-      ${r.codeReferences?.length ? `
-        <div style="margin-top:8px">
-          <div class="__ia-lbl">Code References</div>
-          ${r.codeReferences.slice(0, 3).map(ref =>
-            `<div style="font-size:10px;color:#6c7086">${esc(ref.file)}:${ref.line}</div>`
-          ).join('')}
-        </div>` : ''}
-      ${r.soaReferences?.length ? `
-        <div style="margin-top:8px">
-          <div class="__ia-lbl">SOA Endpoints (from source code)</div>
-          ${r.soaReferences.slice(0, 4).map(ref =>
-            `<div class="__ia-net-row">
-              <div class="__ia-net-ep" title="${esc(ref.file)}:${ref.line}">${esc(ref.methodName)}</div>
-              <div style="font-size:10px;color:#6c7086">${esc(ref.endpoint)}</div>
-            </div>`
-          ).join('')}
-        </div>` : ''}
+    return `
+      <div class="__ia-r-section">
+        <div class="__ia-mod">${esc(r.moduleName ?? 'Unknown')}${modeTag}</div>
+        <div><span class="__ia-badge ${r.sourceType ?? ''}">${esc(r.sourceType ?? 'unknown')}</span></div>
+        <div class="__ia-conf-wrap"><div class="__ia-conf-bar" style="width:${pct}%"></div></div>
+        <div class="__ia-kv"><span class="__ia-k">confidence</span><span class="__ia-v">${pct}%</span></div>
+      </div>
     `;
+  }
+
+  function renderResultEvidence(r: AnalysisResult): string {
+    const evidence = r.evidence ?? [];
+    const components = r.candidateComponents ?? [];
+    if (!evidence.length && !components.length) return '';
+
+    const evidenceHtml = evidence.slice(0, 3)
+      .map(e => `<div class="__ia-ev-item">${esc(e)}</div>`).join('');
+
+    const chipHtml = components.length
+      ? `<div style="margin-top:4px"><span class="__ia-k">components</span><br/>${components.map(c => `<span class="__ia-chip">${esc(c)}</span>`).join('')}</div>`
+      : '';
+
+    return `
+      <div class="__ia-r-section">
+        <hr class="__ia-r-divider"/>
+        <div class="__ia-lbl">Evidence</div>
+        ${evidenceHtml}
+        ${chipHtml}
+      </div>
+    `;
+  }
+
+  function renderResultCode(r: AnalysisResult): string {
+    const codeRefs = r.codeReferences ?? [];
+    const soaRefs = r.soaReferences ?? [];
+    if (!codeRefs.length && !soaRefs.length) return '';
+
+    const codeHtml = codeRefs.slice(0, 3).map(ref =>
+      `<div class="__ia-code-file">${esc(ref.file)}:${ref.line}</div>` +
+      (ref.snippet ? `<div class="__ia-code-snippet">${esc(ref.snippet)}</div>` : '')
+    ).join('');
+
+    const soaHtml = soaRefs.slice(0, 3).map(ref =>
+      `<div class="__ia-net-row">
+        <div class="__ia-net-ep" title="${esc(ref.file)}:${ref.line}">${esc(ref.methodName)}</div>
+        <div style="font-size:10px;color:#6c7086">${esc(ref.endpoint)}</div>
+      </div>`
+    ).join('');
+
+    return `
+      <div class="__ia-r-section">
+        <hr class="__ia-r-divider"/>
+        <div class="__ia-lbl">Code</div>
+        ${codeHtml}
+        ${soaHtml}
+      </div>
+    `;
+  }
+
+  function renderResultDetails(r: AnalysisResult, ctx: ElementContext | null): string {
+    const parts: string[] = [];
+
+    // Full explanation
+    if (r.explanation) {
+      parts.push(`<div class="__ia-detail-sec"><div class="__ia-lbl">Explanation</div><div class="__ia-expl">${esc(r.explanation)}</div></div>`);
+    }
+
+    // Full evidence list (if more than 3)
+    const evidence = r.evidence ?? [];
+    if (evidence.length > 3) {
+      parts.push(`<div class="__ia-detail-sec"><div class="__ia-lbl">All Evidence (${evidence.length})</div>${evidence.map(e => `<div class="__ia-ev-item">${esc(e)}</div>`).join('')}</div>`);
+    }
+
+    // Element context details
+    if (ctx) {
+      const el = ctx.selectedElement;
+      const stack = ctx.reactComponentStack ?? [];
+      const net = ctx.networkContext;
+      let ctxHtml = `
+        <div class="__ia-kv"><span class="__ia-k">tag</span><span class="__ia-v">&lt;${esc(el.tag)}&gt;</span></div>
+        ${el.text ? `<div class="__ia-kv"><span class="__ia-k">text</span><span class="__ia-v">"${esc(el.text.slice(0, 120))}"</span></div>` : ''}
+        ${el.id ? `<div class="__ia-kv"><span class="__ia-k">id</span><span class="__ia-v">#${esc(el.id)}</span></div>` : ''}
+        ${el.className ? `<div class="__ia-kv"><span class="__ia-k">class</span><span class="__ia-v">${esc(el.className.slice(0, 80))}</span></div>` : ''}
+      `;
+      if (stack.length) {
+        ctxHtml += `<div class="__ia-kv" style="margin-top:4px"><span class="__ia-k">components</span><br/>${stack.map(n => `<span class="__ia-chip">${esc(n)}</span>`).join('')}</div>`;
+      }
+      ctxHtml += `
+        <div style="margin-top:6px">
+          <span class="__ia-k">network</span>
+          <span class="__ia-net-count">${net.requests.length} request${net.requests.length !== 1 ? 's' : ''}</span>
+          ${net.requests.slice(0, 5).map(r => `<div class="__ia-net-row"><div class="__ia-net-ep">${esc(r.method)} ${esc(r.endpoint)}</div></div>`).join('')}
+          ${net.ssrData.length ? `<div class="__ia-net-ssr">SSR: ${net.ssrData.map(s => esc(s.key)).join(', ')}</div>` : ''}
+        </div>
+      `;
+      parts.push(`<div class="__ia-detail-sec"><div class="__ia-lbl">Element Context</div>${ctxHtml}</div>`);
+    }
+
+    // All code references (if more than 3)
+    const codeRefs = r.codeReferences ?? [];
+    if (codeRefs.length > 3) {
+      parts.push(`<div class="__ia-detail-sec"><div class="__ia-lbl">All Code References (${codeRefs.length})</div>${codeRefs.map(ref =>
+        `<div class="__ia-code-file">${esc(ref.file)}:${ref.line}</div>` +
+        (ref.snippet ? `<div class="__ia-code-snippet">${esc(ref.snippet)}</div>` : '')
+      ).join('')}</div>`);
+    }
+
+    // All SOA references (if more than 3)
+    const soaRefs = r.soaReferences ?? [];
+    if (soaRefs.length > 3) {
+      parts.push(`<div class="__ia-detail-sec"><div class="__ia-lbl">All SOA Endpoints (${soaRefs.length})</div>${soaRefs.map(ref =>
+        `<div class="__ia-net-row">
+          <div class="__ia-net-ep" title="${esc(ref.file)}:${ref.line}">${esc(ref.methodName)}</div>
+          <div style="font-size:10px;color:#6c7086">${esc(ref.endpoint)}</div>
+        </div>`
+      ).join('')}</div>`);
+    }
+
+    if (!parts.length) return '';
+
+    return `
+      <details class="__ia-r-details">
+        <summary>More details</summary>
+        <div class="__ia-r-details-body">${parts.join('')}</div>
+      </details>
+    `;
+  }
+
+  // ── Render result (compositor) ────────────────────────────────────────────────
+
+  function renderResult(r: AnalysisResult) {
+    elRbody.innerHTML =
+      renderResultSummary(r) +
+      renderResultEvidence(r) +
+      renderResultCode(r) +
+      renderResultDetails(r, currentContext);
   }
 
   // ── HTML escaping ─────────────────────────────────────────────────────────────
@@ -611,30 +779,53 @@ function boot() {
   /** Pattern-based filter for framework/library components (not project-specific) */
   function isFrameworkNoise(name: string): boolean {
     if (name.startsWith('React')) return true;
-    if (/(?:Provider|Consumer|Adapter|Boundary|Overlay|Wrapper|Context)$/.test(name)) return true;
+    // 只过滤"纯泛型"组件：名字本身就是 Provider/Wrapper 等，或只有一个短前缀（如 AppWrapper, ThemeProvider）
+    // 像 StaticInfoWrapper、HotelInfoProvider 这种多段业务命名不过滤
+    if (/^[A-Z][a-z]*(?:Provider|Consumer|Adapter|Boundary|Overlay|Wrapper|Context)$/.test(name)) return true;
     if (/^(?:Root|App|MyApp|Container|AppContainer)$/.test(name)) return true;
+    if (componentBlacklist.length && componentBlacklist.some(b => name === b || name.startsWith(b))) return true;
     return false;
   }
 
+  // 给定一个 DOM 元素，找出渲染它的 React 组件调用链
   function getReactComponentStack(el: Element): string[] {
+    // step1: 找到 React 内部 Fiber 节点
     const key = Object.keys(el).find(
       k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')
     );
     if (!key) return [];
     let fiber: any = (el as any)[key];
     const stack: string[] = [];
+    // 沿 fiber.return 向上遍历组件树
     while (fiber) {
       const t = fiber.type;
+      let name: string | undefined;
+
       if (typeof t === 'function') {
-        let name: string | undefined = t.displayName || t.name;
-        if (name) {
-          name = unwrapHOC(name) ?? name;
-          const isMinified = name.length < 4 && name === name.toLowerCase();
-          if (name.length > 1 && name !== 'Anonymous' && !isMinified && !isFrameworkNoise(name) && !stack.includes(name))
-            stack.push(name);
+        // 普通 function / class component
+        name = t.displayName || t.name;
+      } else if (t && typeof t === 'object') {
+        // React.memo() → { $$typeof, type: fn }
+        // React.forwardRef() → { $$typeof, render: fn }
+        name = t.displayName;
+        if (!name) {
+          const inner = t.type || t.render;
+          if (typeof inner === 'function') {
+            name = inner.displayName || inner.name;
+          }
         }
       }
-      fiber = fiber.return;
+
+      if (name) {
+        name = unwrapHOC(name) ?? name;
+        const isMinified = name.length < 4 && name === name.toLowerCase();
+        const isNoise = isFrameworkNoise(name);
+        const isDup = stack.includes(name);
+        const accepted = name.length > 1 && name !== 'Anonymous' && !isMinified && !isNoise && !isDup;
+        if (accepted)
+          stack.push(name);
+      }
+      fiber = fiber.return; // 向上遍历组件树
     }
     return stack;
   }
@@ -678,15 +869,17 @@ function boot() {
   }
 
   // ── Extract full element context ──────────────────────────────────────────────
-
+  // 返回四个维度的对象：ancestors / siblings / nearbyTexts / reactComponentStack
   function extractContext(el: Element): ElementContext {
     const ancestors: ElementContext['ancestors'] = [];
     let anc = el.parentElement;
+    // 向上最多 5 层父元素的 tag / class / id --- 理解元素所在的 DOM 层级结构
     for (let i = 0; i < 5 && anc && anc !== document.body; i++) {
       ancestors.push({ tag: anc.tagName.toLowerCase(), className: anc.className ?? '', id: anc.id ?? '' });
       anc = anc.parentElement;
     }
-
+    
+    // 同级元素的 tag / text / class --- 理解元素所在的横向布局语义
     const siblings: ElementContext['siblings'] = [];
     if (el.parentElement) {
       Array.from(el.parentElement.children).forEach(s => {
@@ -698,6 +891,7 @@ function boot() {
       });
     }
 
+    // 父元素内所有子节点的文本（去重，1~120 字符，最多 10 条） --- 捕获周围的可读文字，提供语义线索
     const nearbyTexts: string[] = [];
     const selfText = (el.textContent ?? '').trim();
     if (el.parentElement) {
@@ -721,8 +915,8 @@ function boot() {
       ancestors,
       siblings,
       nearbyTexts: nearbyTexts.slice(0, 10),
-      reactComponentStack: getReactComponentStack(el),
-      networkContext: {
+      reactComponentStack: getReactComponentStack(el), // 组件调用栈
+      networkContext: { // 当前网络过滤器 + 已记录的请求日志 + SSR 数据 --- 关联点击时刻的数据层状态
         filter: networkFilter,
         requests: [...networkLog],   // snapshot at click time
         ssrData: scanSsrData(),
