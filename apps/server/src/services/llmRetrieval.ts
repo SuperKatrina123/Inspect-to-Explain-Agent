@@ -6,7 +6,7 @@ import { searchByContext, searchSoaEndpoints } from './codeSearch';
 
 // ── OpenAI-compatible client — base URL and model are read from env ──────────
 // Default to the user-configured proxy; override via LLM_BASE_URL / LLM_MODEL.
-const DEFAULT_BASE_URL = 'https://9985678.xyz/v1';
+const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL    = 'gpt-5.4';
 
 const MODEL = process.env.LLM_MODEL ?? DEFAULT_MODEL;
