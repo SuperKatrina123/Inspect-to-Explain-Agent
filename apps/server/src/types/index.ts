@@ -44,18 +44,23 @@ export interface NetworkContext {
   ssrData: SsrData[];          // SSR hydration data found on the page
 }
 
+export interface ReactInspection {
+  nearestComponent: string | null;
+  businessStack: string[];
+  propsSummary: Record<string, unknown> | null;
+  fiberDepth: number;
+}
+
 export interface ElementContext {
   url: string;
   selectedElement: SelectedElement;
   ancestors: AncestorNode[];
   siblings: SiblingNode[];
   nearbyTexts: string[];
-  /**
-   * React component names from the Fiber tree, nearest → root.
-   * e.g. ["OrderItemRow", "OrderSummary", "App"]
-   * Empty array when Fiber is not accessible.
-   */
-  reactComponentStack: string[];
+  /** Structured React inspection result from Fiber tree */
+  reactInspection?: ReactInspection;
+  /** Business component stack (backward compat, also populated from reactInspection) */
+  reactComponentStack?: string[];
   /** Network data collected by the bookmarklet — undefined when using iframe demo mode */
   networkContext?: NetworkContext;
 }

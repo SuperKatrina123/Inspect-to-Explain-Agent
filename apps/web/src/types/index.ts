@@ -34,8 +34,15 @@ export interface ElementContext {
   ancestors: AncestorNode[];
   siblings: SiblingNode[];
   nearbyTexts: string[];
-  /** React component names from Fiber tree, nearest → root. */
-  reactComponentStack: string[];
+  /** @deprecated Use reactInspection instead */
+  reactComponentStack?: string[];
+  /** Structured React inspection from Fiber tree */
+  reactInspection?: {
+    nearestComponent: string | null;
+    businessStack: string[];
+    propsSummary: Record<string, unknown> | null;
+    fiberDepth: number;
+  };
   /** Network context from bookmarklet — undefined in iframe/demo mode */
   networkContext?: NetworkContext;
 }

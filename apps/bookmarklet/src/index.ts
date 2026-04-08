@@ -12,6 +12,11 @@
  * __SERVER_URL__ is replaced at build time (see build.ts).
  */
 
+import {
+  extractReactInspectionContext,
+  type ReactInspection,
+} from './reactInspector';
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface RecordedRequest {
@@ -50,6 +55,9 @@ interface ElementContext {
   ancestors: Array<{ tag: string; className: string; id: string }>;
   siblings: Array<{ tag: string; text: string; className: string }>;
   nearbyTexts: string[];
+  /** 结构化 React 检查结果 */
+  reactInspection: ReactInspection;
+  /** 向后兼容：业务组件栈 */
   reactComponentStack: string[];
   networkContext: NetworkContext;
 }
@@ -557,7 +565,7 @@ function boot() {
 
   function renderContext(ctx: ElementContext) {
     const el = ctx.selectedElement;
-    const stack = ctx.reactComponentStack ?? [];
+    const ri = ctx.reactInspection;
     elEmpty.style.display = 'none';
     elCtx.style.display = '';
 
@@ -565,15 +573,18 @@ function boot() {
     const textPart = el.text
       ? ` <span class="__ia-el-text">"${esc(el.text.slice(0, 50))}${el.text.length > 50 ? '…' : ''}"</span>`
       : '';
-    const maxChips = 4;
-    const chipHtml = stack.slice(0, maxChips).map(n => `<span class="__ia-chip">${esc(n)}</span>`).join('');
-    const overflowHtml = stack.length > maxChips ? `<span class="__ia-chip">+${stack.length - maxChips}</span>` : '';
+
+    // 只展示最近业务组件
+    const bestHint = ri?.nearestComponent ?? null;
+    const hintHtml = bestHint
+      ? `<div style="margin-top:4px"><span class="__ia-chip">${esc(bestHint)}</span></div>`
+      : '';
 
     elCtx.innerHTML = `
       <div class="__ia-el-summary">
         <span class="__ia-el-tag">&lt;${esc(el.tag)}&gt;</span>${idPart}${textPart}
       </div>
-      ${stack.length ? `<div style="margin-top:4px">${chipHtml}${overflowHtml}</div>` : ''}
+      ${hintHtml}
     `;
   }
 
@@ -701,7 +712,8 @@ function boot() {
     // Element context details
     if (ctx) {
       const el = ctx.selectedElement;
-      const stack = ctx.reactComponentStack ?? [];
+      const ri = ctx.reactInspection;
+      const bstack = ri?.businessStack ?? [];
       const net = ctx.networkContext;
       let ctxHtml = `
         <div class="__ia-kv"><span class="__ia-k">tag</span><span class="__ia-v">&lt;${esc(el.tag)}&gt;</span></div>
@@ -709,8 +721,12 @@ function boot() {
         ${el.id ? `<div class="__ia-kv"><span class="__ia-k">id</span><span class="__ia-v">#${esc(el.id)}</span></div>` : ''}
         ${el.className ? `<div class="__ia-kv"><span class="__ia-k">class</span><span class="__ia-v">${esc(el.className.slice(0, 80))}</span></div>` : ''}
       `;
-      if (stack.length) {
-        ctxHtml += `<div class="__ia-kv" style="margin-top:4px"><span class="__ia-k">components</span><br/>${stack.map(n => `<span class="__ia-chip">${esc(n)}</span>`).join('')}</div>`;
+      if (bstack.length) {
+        ctxHtml += `<div class="__ia-kv" style="margin-top:4px"><span class="__ia-k">business stack</span><br/>${bstack.map(n => `<span class="__ia-chip">${esc(n)}</span>`).join('')}</div>`;
+      }
+      if (ri?.propsSummary) {
+        const propsStr = JSON.stringify(ri.propsSummary, null, 0);
+        ctxHtml += `<div class="__ia-kv" style="margin-top:4px"><span class="__ia-k">props</span><div class="__ia-code-snippet">${esc(propsStr.slice(0, 200))}</div></div>`;
       }
       ctxHtml += `
         <div style="margin-top:6px">
@@ -769,67 +785,6 @@ function boot() {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // ── React Fiber component stack ───────────────────────────────────────────────
-
-  function unwrapHOC(name: string): string | null {
-    const m = name.match(/^(?:Memo|ForwardRef|WithRouter|Connect|Styled)\((.+)\)$/);
-    return m ? m[1] : null;
-  }
-
-  /** Pattern-based filter for framework/library components (not project-specific) */
-  function isFrameworkNoise(name: string): boolean {
-    if (name.startsWith('React')) return true;
-    // 只过滤"纯泛型"组件：名字本身就是 Provider/Wrapper 等，或只有一个短前缀（如 AppWrapper, ThemeProvider）
-    // 像 StaticInfoWrapper、HotelInfoProvider 这种多段业务命名不过滤
-    if (/^[A-Z][a-z]*(?:Provider|Consumer|Adapter|Boundary|Overlay|Wrapper|Context)$/.test(name)) return true;
-    if (/^(?:Root|App|MyApp|Container|AppContainer)$/.test(name)) return true;
-    if (componentBlacklist.length && componentBlacklist.some(b => name === b || name.startsWith(b))) return true;
-    return false;
-  }
-
-  // 给定一个 DOM 元素，找出渲染它的 React 组件调用链
-  function getReactComponentStack(el: Element): string[] {
-    // step1: 找到 React 内部 Fiber 节点
-    const key = Object.keys(el).find(
-      k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')
-    );
-    if (!key) return [];
-    let fiber: any = (el as any)[key];
-    const stack: string[] = [];
-    // 沿 fiber.return 向上遍历组件树
-    while (fiber) {
-      const t = fiber.type;
-      let name: string | undefined;
-
-      if (typeof t === 'function') {
-        // 普通 function / class component
-        name = t.displayName || t.name;
-      } else if (t && typeof t === 'object') {
-        // React.memo() → { $$typeof, type: fn }
-        // React.forwardRef() → { $$typeof, render: fn }
-        name = t.displayName;
-        if (!name) {
-          const inner = t.type || t.render;
-          if (typeof inner === 'function') {
-            name = inner.displayName || inner.name;
-          }
-        }
-      }
-
-      if (name) {
-        name = unwrapHOC(name) ?? name;
-        const isMinified = name.length < 4 && name === name.toLowerCase();
-        const isNoise = isFrameworkNoise(name);
-        const isDup = stack.includes(name);
-        const accepted = name.length > 1 && name !== 'Anonymous' && !isMinified && !isNoise && !isDup;
-        if (accepted)
-          stack.push(name);
-      }
-      fiber = fiber.return; // 向上遍历组件树
-    }
-    return stack;
-  }
-
   // ── CSS Selector ──────────────────────────────────────────────────────────────
 
   function getCssSelector(el: Element): string {
@@ -869,7 +824,7 @@ function boot() {
   }
 
   // ── Extract full element context ──────────────────────────────────────────────
-  // 返回四个维度的对象：ancestors / siblings / nearbyTexts / reactComponentStack
+  // 整合 DOM 上下文 + React 检查结果
   function extractContext(el: Element): ElementContext {
     const ancestors: ElementContext['ancestors'] = [];
     let anc = el.parentElement;
@@ -878,7 +833,7 @@ function boot() {
       ancestors.push({ tag: anc.tagName.toLowerCase(), className: anc.className ?? '', id: anc.id ?? '' });
       anc = anc.parentElement;
     }
-    
+
     // 同级元素的 tag / text / class --- 理解元素所在的横向布局语义
     const siblings: ElementContext['siblings'] = [];
     if (el.parentElement) {
@@ -902,6 +857,9 @@ function boot() {
       });
     }
 
+    // 用新的 React Inspector 提取组件信息
+    const inspection = extractReactInspectionContext(el, componentBlacklist);
+
     return {
       url: window.location.href,
       selectedElement: {
@@ -915,8 +873,10 @@ function boot() {
       ancestors,
       siblings,
       nearbyTexts: nearbyTexts.slice(0, 10),
-      reactComponentStack: getReactComponentStack(el), // 组件调用栈
-      networkContext: { // 当前网络过滤器 + 已记录的请求日志 + SSR 数据 --- 关联点击时刻的数据层状态
+      reactInspection: inspection.react,
+      // 向后兼容：server 端仍依赖 reactComponentStack 做 code search
+      reactComponentStack: inspection.react.businessStack,
+      networkContext: {
         filter: networkFilter,
         requests: [...networkLog],   // snapshot at click time
         ssrData: scanSsrData(),

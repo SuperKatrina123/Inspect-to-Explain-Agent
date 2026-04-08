@@ -47,13 +47,14 @@ interface SearchTokens {
  * Extract search tokens from element context.
  *
  * Priority:
- *   1. reactComponentStack (real Fiber names) — exact, no guessing needed
+ *   1. reactInspection.businessStack / reactComponentStack — exact Fiber names
  *   2. className tokens from element + ancestors — fuzzy fallback
  *   3. PascalCase guesses from ancestor class root tokens
  */
 function extractSearchTokens(ctx: ElementContext): SearchTokens {
-  // 1. Fiber components (filtering of framework noise is done by filterFiberStack)
-  const fiberComponents = (ctx.reactComponentStack ?? []).filter(
+  // 1. Fiber components — prefer reactInspection, fall back to legacy stack
+  const rawStack = ctx.reactInspection?.businessStack ?? ctx.reactComponentStack ?? [];
+  const fiberComponents = rawStack.filter(
     (n) => n.length > 2,
   );
 

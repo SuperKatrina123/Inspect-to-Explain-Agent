@@ -13,6 +13,11 @@ router.post('/analyze-element', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Invalid element context: missing selectedElement' });
   }
 
+  // Normalize: ensure reactComponentStack is populated (from reactInspection or directly)
+  if (!ctx.reactComponentStack?.length && ctx.reactInspection?.businessStack?.length) {
+    ctx.reactComponentStack = ctx.reactInspection.businessStack;
+  }
+
   // Filter Fiber stack early: keep only components defined in the local codebase
   const projectRoot = process.env.CODE_SEARCH_ROOT;
   if (projectRoot && ctx.reactComponentStack?.length) {

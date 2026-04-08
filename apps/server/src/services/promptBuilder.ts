@@ -93,7 +93,7 @@ function buildNetworkSection(net: NetworkContext): string {
  * Optionally includes local code search results and network context.
  */
 export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[], soaRefs?: SoaReference[]): string {
-  const { selectedElement: el, ancestors, siblings, nearbyTexts, url, reactComponentStack, networkContext } = ctx;
+  const { selectedElement: el, ancestors, siblings, nearbyTexts, url, reactInspection, reactComponentStack, networkContext } = ctx;
 
   const ancestorChain = ancestors
     .map((a) => {
@@ -109,10 +109,22 @@ export function buildUserMessage(ctx: ElementContext, codeRefs?: CodeReference[]
     .map((s) => `  • <${s.tag} class="${s.className}">${s.text ? `"${s.text.slice(0, 40)}"` : '(empty)'}`)
     .join('\n');
 
-  // Fiber component stack section — only included when available
-  const fiberSection = reactComponentStack && reactComponentStack.length > 0
-    ? `\n## React Component Stack (from Fiber tree — most reliable signal)\n\n${reactComponentStack.join(' → ')}\n\nThe nearest component to the selected element is listed first. Use this as your primary signal for moduleName and candidateComponents.\n`
-    : '';
+  // React component hints — secondary evidence
+  let fiberSection = '';
+  const bstack = reactInspection?.businessStack ?? reactComponentStack ?? [];
+  if (bstack.length > 0) {
+    const lines: string[] = [`Component stack (nearest → root): ${bstack.join(' → ')}`];
+    if (reactInspection?.nearestComponent) {
+      lines.push(`Nearest component: ${reactInspection.nearestComponent}`);
+    }
+    if (reactInspection?.propsSummary) {
+      const propsStr = JSON.stringify(reactInspection.propsSummary);
+      if (propsStr.length < 500) {
+        lines.push(`Props: ${propsStr}`);
+      }
+    }
+    fiberSection = `\n## React Component Hints (secondary evidence — may include framework internals)\n\n${lines.join('\n')}\n\nThese come from the React Fiber tree. Use them as supporting evidence alongside DOM structure, className, and network context.\n`;
+  }
 
   // Network section — strongest signal for sourceType
   const networkSection = networkContext ? buildNetworkSection(networkContext) : '';
