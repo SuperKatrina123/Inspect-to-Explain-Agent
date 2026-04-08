@@ -63,6 +63,8 @@ export interface ElementContext {
   reactComponentStack?: string[];
   /** Network data collected by the bookmarklet — undefined when using iframe demo mode */
   networkContext?: NetworkContext;
+  /** Client-provided code search root path (overrides CODE_SEARCH_ROOT env var) */
+  codeSearchRoot?: string;
 }
 
 export type SourceType =

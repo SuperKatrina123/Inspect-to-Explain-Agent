@@ -107,6 +107,10 @@ function boot() {
   let componentBlacklist: string[] = (localStorage.getItem(LS_BLACKLIST) || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
+  // Code search root path (optional, persisted to localStorage)
+  const LS_CODE_ROOT = '__ia_code_root';
+  let codeSearchRoot: string = localStorage.getItem(LS_CODE_ROOT) || '';
+
   let inspectActive = false;
   let lastHighlighted: Element | null = null;
   let currentContext: ElementContext | null = null;
@@ -388,6 +392,10 @@ function boot() {
           <span class="__ia-filter-lbl">blacklist:</span>
           <input class="__ia-filter-input" id="__ia-blacklist" placeholder="_XView, FlatList, …" title="Comma-separated component names to hide (saved to localStorage)" />
         </div>
+        <div class="__ia-filter-row">
+          <span class="__ia-filter-lbl">code root:</span>
+          <input class="__ia-filter-input" id="__ia-code-root" placeholder="src/pages/hotel" title="Source code path for code search (module/page level, not whole repo)" />
+        </div>
       </details>
     </div>
     <div class="__ia-sec">
@@ -418,6 +426,7 @@ function boot() {
   const elRsec    = panel.querySelector('#__ia-rsec')    as HTMLElement;
   const elRbody   = panel.querySelector('#__ia-rbody')   as HTMLElement;
   const elBlacklist = panel.querySelector('#__ia-blacklist') as HTMLInputElement;
+  const elCodeRoot  = panel.querySelector('#__ia-code-root') as HTMLInputElement;
 
   // Initialise server input from stored value
   elServer.value = SERVER;
@@ -431,6 +440,13 @@ function boot() {
   elBlacklist.addEventListener('change', () => {
     componentBlacklist = elBlacklist.value.split(',').map(s => s.trim()).filter(Boolean);
     localStorage.setItem(LS_BLACKLIST, componentBlacklist.join(','));
+  });
+
+  // Initialise code search root input (blur = commit)
+  elCodeRoot.value = codeSearchRoot;
+  elCodeRoot.addEventListener('blur', () => {
+    codeSearchRoot = elCodeRoot.value.trim();
+    localStorage.setItem(LS_CODE_ROOT, codeSearchRoot);
   });
 
   // Sync filter input → networkFilter state
@@ -607,10 +623,12 @@ function boot() {
     elRbody.innerHTML = '<div class="__ia-st">Analyzing…</div>';
 
     try {
+      const payload: any = { ...currentContext };
+      if (codeSearchRoot) payload.codeSearchRoot = codeSearchRoot;
       const res = await fetch(`${SERVER}/api/analyze-element`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(currentContext),
+        body: JSON.stringify(payload),
         signal: analyzeController.signal,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

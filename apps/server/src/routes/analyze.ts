@@ -18,10 +18,14 @@ router.post('/analyze-element', async (req: Request, res: Response) => {
     ctx.reactComponentStack = ctx.reactInspection.businessStack;
   }
 
+  // Code search root: prefer client-provided path, fall back to env var
+  const codeSearchRoot = ctx.codeSearchRoot || process.env.CODE_SEARCH_ROOT || undefined;
+  // Attach resolved value so downstream (llmRetrieval) can use it
+  ctx.codeSearchRoot = codeSearchRoot;
+
   // Filter Fiber stack early: keep only components defined in the local codebase
-  const projectRoot = process.env.CODE_SEARCH_ROOT;
-  if (projectRoot && ctx.reactComponentStack?.length) {
-    ctx.reactComponentStack = filterFiberStack(ctx.reactComponentStack, projectRoot);
+  if (codeSearchRoot && ctx.reactComponentStack?.length) {
+    ctx.reactComponentStack = filterFiberStack(ctx.reactComponentStack, codeSearchRoot);
   }
 
   const useLLM = process.env.USE_LLM === 'true';

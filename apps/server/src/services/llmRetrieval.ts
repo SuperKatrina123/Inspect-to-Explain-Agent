@@ -55,7 +55,7 @@ function parseModelResponse(raw: string, ctx: ElementContext): AnalysisResult | 
 export async function analyzeElementWithLLM(ctx: ElementContext): Promise<AnalysisResult> {
   const apiKey      = process.env.ANTHROPIC_API_KEY;
   const baseURL     = process.env.LLM_BASE_URL ?? DEFAULT_BASE_URL;
-  const projectRoot = process.env.CODE_SEARCH_ROOT;
+  const projectRoot = ctx.codeSearchRoot || process.env.CODE_SEARCH_ROOT;
 
   if (!apiKey) {
     console.warn('[llm] ANTHROPIC_API_KEY not set — falling back to mock');
